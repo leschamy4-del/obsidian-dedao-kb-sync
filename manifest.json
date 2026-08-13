@@ -1,10 +1,10 @@
 {
   "id": "dedao-kb-sync",
   "name": "得到大脑知识库同步",
-  "version": "1.0.0",
-  "description": "按知识库自动建文件夹并打标签，把得到大脑（原Get笔记）的笔记与订阅的抖音博主内容同步到 Obsidian。",
+  "version": "1.0.1",
+  "description": "Sync notes and subscribed blogger content from Dedao Brain (GetNotes) into Obsidian with folders and tags.",
   "author": "Marvincao",
   "authorUrl": "https://github.com/leschamy4-del",
-  "isDesktopOnly": false,
+  "isDesktopOnly": true,
   "minAppVersion": "1.8.7"
 }
