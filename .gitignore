@@ -1,0 +1,40 @@
+node_modules/
+main.js
+main.js.map
+
+# Local agent/tooling state
+.superpowers/
+.agents/
+.claude/
+.claude-mem-context.md
+bun.lock
+skills-lock.json
+
+# Environment and local overrides
+.env
+.env.*
+!.env.example
+data.json
+
+# Test/build output
+coverage/
+dist/
+
+# OS/editor noise
+.DS_Store
+
+# Git worktrees
+.worktrees/
+
+# Local dev/cleanup scripts with machine-specific paths (not for distribution)
+scripts/*.cjs
+scripts/fix_*.js
+scripts/merge_resources.js
+scripts/check-vault-sync.mjs
+
+# Local dev backups, test logs, and internal handover notes (not for distribution)
+backups/
+.playwright-mcp/
+HANDOVER/
+migration-preview.md
+migration-result.md

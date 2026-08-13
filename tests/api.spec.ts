@@ -1,0 +1,1007 @@
+import { describe, it, expect, vi } from 'vitest';
+import { createNote, fetchNoteChildren, fetchNotes, fetchNoteDetail, fetchNoteOriginal, fetchRecallSearch, fetchSubscribedKnowledgeNotes, fetchSubscribedTopics, fetchTopicContentPreviewPage } from '../src/api';
+
+// Extract the internal safeJsonParse for direct testing
+function safeJsonParse(text: string): unknown {
+  let safe = text.replace(
+    /"(id|note_id|parent_id|follow_id|live_id)"\s*:\s*(\d+)/g,
+    '"$1":"$2"'
+  );
+  safe = safe.replace(/"children_ids"\s*:\s*\[([^\]]*)\]/g, (_match, body: string) => {
+    const normalized = body
+      .split(',')
+      .map(item => {
+        const trimmed = item.trim();
+        return /^\d{15,}$/.test(trimmed) ? `"${trimmed}"` : item;
+      })
+      .join(',');
+    return `"children_ids":[${normalized}]`;
+  });
+  return JSON.parse(safe);
+}
+
+function mockFetchResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+  } as unknown as Response;
+}
+
+function mockTextFetchResponse(text: string, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ 'content-type': 'text/html' }),
+    text: () => Promise.resolve(text),
+    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+  } as unknown as Response;
+}
+
+describe('safeJsonParse', () => {
+  it('将大整数 id 字段转为字符串以防止精度丢失', () => {
+    const input = '{"id":9007199254740999,"note_id":123456789012345678,"title":"test"}';
+    const result = safeJsonParse(input) as Record<string, unknown>;
+    expect(typeof result.id).toBe('string');
+    expect(result.id).toBe('9007199254740999');
+    expect(typeof result.note_id).toBe('string');
+    expect(result.note_id).toBe('123456789012345678');
+    expect(result.title).toBe('test');
+  });
+
+  it('小整数 id 也转为字符串', () => {
+    const input = '{"id":42,"name":"test"}';
+    const result = safeJsonParse(input) as Record<string, unknown>;
+    expect(typeof result.id).toBe('string');
+    expect(result.id).toBe('42');
+  });
+
+  it('parent_id 和 follow_id 也转为字符串', () => {
+    const input = '{"parent_id":999888777,"follow_id":666555444,"live_id":333222111}';
+    const result = safeJsonParse(input) as Record<string, unknown>;
+    expect(typeof result.parent_id).toBe('string');
+    expect(result.parent_id).toBe('999888777');
+    expect(typeof result.follow_id).toBe('string');
+    expect(result.follow_id).toBe('666555444');
+    expect(typeof result.live_id).toBe('string');
+    expect(result.live_id).toBe('333222111');
+  });
+
+  it('不含 id 字段的 JSON 照常解析', () => {
+    const input = '{"name":"test","value":100}';
+    const result = safeJsonParse(input) as Record<string, unknown>;
+    expect(result.name).toBe('test');
+    expect(result.value).toBe(100);
+  });
+
+  it('数组中嵌套的对象也正确处理', () => {
+    const input =
+      '{"data":{"notes":[{"id":9999999999999999,"title":"note1"},{"id":8888888888888888,"title":"note2"}]}}';
+    const result = safeJsonParse(input) as Record<string, unknown>;
+    const data = result.data as { notes: Array<{ id: string; title: string }> };
+    expect(data.notes[0].id).toBe('9999999999999999');
+    expect(data.notes[1].id).toBe('8888888888888888');
+  });
+
+  it('children_ids 数组中的大整数也转为字符串', () => {
+    const input = '{"children_ids":[1909246675068292528,1908043831896764336]}';
+    const result = safeJsonParse(input) as { children_ids: string[] };
+    expect(result.children_ids).toEqual(['1909246675068292528', '1908043831896764336']);
+  });
+
+  it('处理空对象', () => {
+    expect(safeJsonParse('{}')).toEqual({});
+  });
+
+  it('处理空数组', () => {
+    expect(safeJsonParse('[]')).toEqual([]);
+  });
+});
+
+describe('fetchNoteDetail', () => {
+  it('返回指定 id 的笔记详情，包含 attachments 字段', async () => {
+    const mockResponse = {
+      success: true,
+      data: {
+        id: '1908723638246504120',
+        note_id: '1908723638246504120',
+        title: '测试录音',
+        content: 'AI 摘要',
+        note_type: 'recorder_audio',
+        source: 'app',
+        tags: [],
+        attachments: [
+          {
+            type: 'audio',
+            url: 'https://mediacdn.umiwi.com/voicenotes%2Ftest.mp3?Expires=1778291785&Signature=abc',
+            title: '',
+            duration: 883920,
+          },
+        ],
+        audio: '🟢 说话人1 [00:00:01]\n测试内容',
+        created_at: '2026-04-30 12:45:24',
+        updated_at: '2026-04-30 13:00:07',
+      },
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockFetchResponse(mockResponse) as Response);
+
+    try {
+      const result = await fetchNoteDetail('1908723638246504120', 'test-token', 'test-client');
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].type).toBe('audio');
+      expect(result.audio).toContain('说话人1');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('兼容详情接口 data.note + data.audio.original 的嵌套结构', async () => {
+    const mockResponse = {
+      success: true,
+      data: {
+        note: {
+          id: '1909428570156704824',
+          note_id: '1909428570156704824',
+          title: '嵌套录音',
+          content: 'AI 摘要',
+          note_type: 'recorder_audio',
+          source: 'app',
+          tags: [],
+          created_at: '2026-05-09 10:00:00',
+          updated_at: '2026-05-09 10:05:00',
+        },
+        attachments: [
+          { type: 'audio', url: 'https://cdn.example.com/audio.mp3', title: '', duration: 300000 },
+        ],
+        audio: {
+          original: '🟢 说话人1 [00:00:01]\n嵌套转写',
+        },
+      },
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockFetchResponse(mockResponse) as Response);
+
+    try {
+      const result = await fetchNoteDetail('1909428570156704824', 'test-token', 'test-client');
+      expect(result.title).toBe('嵌套录音');
+      expect(result.attachments).toHaveLength(1);
+      expect(result.audio).toBe('🟢 说话人1 [00:00:01]\n嵌套转写');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('解析官方详情接口里的链接原文内容', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        success: true,
+        data: {
+          note: {
+            id: '1912223334445556667',
+            note_id: '1912223334445556667',
+            title: '链接笔记',
+            content: 'AI 摘要',
+            note_type: 'link',
+            source: 'app',
+            tags: [],
+            web_page: {
+              title: '原网页标题',
+              url: 'https://example.com/source',
+              content: '这是远端链接原文全文',
+            },
+            created_at: '2026-05-09 10:00:00',
+            updated_at: '2026-05-09 10:05:00',
+          },
+        },
+      }) as Response
+    );
+
+    try {
+      const result = await fetchNoteDetail('1912223334445556667', 'test-token', 'test-client');
+      expect(result.linkOriginal).toEqual({
+        title: '原网页标题',
+        url: 'https://example.com/source',
+        content: '这是远端链接原文全文',
+      });
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('解析官方详情接口里的主子笔记关系字段', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse(JSON.stringify({
+        success: true,
+        data: {
+          note: {
+            id: 0,
+            note_id: 0,
+            title: '主笔记',
+            content: '正文',
+            note_type: 'plain_text',
+            source: 'app',
+            tags: [],
+            created_at: '2026-05-06 22:07:04',
+            updated_at: '2026-05-06 22:07:04',
+            children_count: 1,
+            children_ids: [0],
+            is_child_note: false,
+          },
+        },
+      })
+        .replace('"id":0', '"id":1909193892067130512')
+        .replace('"note_id":0', '"note_id":1909193892067130512')
+        .replace('[0]', '[1909246675068292528]')) as Response
+    );
+
+    try {
+      const result = await fetchNoteDetail('1909193892067130512', 'test-token', 'test-client');
+      expect(result.note_id).toBe('1909193892067130512');
+      expect(result.children_count).toBe(1);
+      expect(result.children_ids).toEqual(['1909246675068292528']);
+      expect(result.is_child_note).toBe(false);
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('笔记不存在时抛出错误', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({ success: false, error: { message: '笔记不存在' } }) as Response
+    );
+
+    try {
+      await expect(fetchNoteDetail('not-exist', 'test-token', 'test-client')).rejects.toThrow('笔记不存在');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});
+
+describe('fetchRecallSearch', () => {
+  it('calls the official OpenAPI recall endpoint and normalizes results', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse(JSON.stringify({
+        success: true,
+        data: {
+          results: [
+            {
+              note_id: 0,
+              title: '搜索结果',
+              content: '命中的正文片段',
+              note_type: 'link',
+              updated_at: '2026-05-20 10:00:00',
+              created_at: '2026-05-19 10:00:00',
+              score: 0.82,
+            },
+          ],
+        },
+      }).replace('"note_id":0', '"note_id":1909193892067130512')) as Response
+    );
+
+    try {
+      const results = await fetchRecallSearch({
+        query: 'Obsidian',
+        token: 'test-token',
+        clientId: 'test-client',
+        topK: 5,
+      });
+
+      expect(results).toEqual([
+        expect.objectContaining({
+          note_id: '1909193892067130512',
+          title: '搜索结果',
+          content: '命中的正文片段',
+          note_type: 'link',
+          updated_at: '2026-05-20 10:00:00',
+          score: 0.82,
+        }),
+      ]);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://openapi.biji.com/open/api/v1/resource/recall',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token',
+            'X-Client-ID': 'test-client',
+            'Content-Type': 'application/json',
+          }),
+          body: JSON.stringify({ query: 'Obsidian', top_k: 5 }),
+        })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('deduplicates recall chunks from the same note id', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse(JSON.stringify({
+        success: true,
+        data: {
+          results: [
+            {
+              note_id: 'same-note',
+              title: '同一篇文章',
+              content: '第一段命中',
+              note_type: 'plain_text',
+              updated_at: '2026-05-20 10:00:00',
+              score: 0.9,
+            },
+            {
+              note_id: 'same-note',
+              title: '同一篇文章',
+              content: '第二段命中',
+              note_type: 'plain_text',
+              updated_at: '2026-05-20 10:00:00',
+              score: 0.8,
+            },
+          ],
+        },
+      })) as Response
+    );
+
+    try {
+      const results = await fetchRecallSearch({
+        query: 'Palantir',
+        token: 'test-token',
+        clientId: 'test-client',
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual(expect.objectContaining({
+        note_id: 'same-note',
+        content: '第一段命中',
+      }));
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});
+
+describe('fetchNotes limit', () => {
+  function mockListResponse() {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        data: { notes: [], has_more: false, next_cursor: '' },
+      }) as Response
+    );
+  }
+
+  it('默认请求不带 limit 参数（API 最大 20 条）', async () => {
+    mockListResponse();
+
+    try {
+      await fetchNotes({ token: 'test-token', clientId: 'test-client' });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.not.stringContaining('limit='),
+        expect.any(Object)
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('limit 参数不再传递到 URL（已移除）', async () => {
+    mockListResponse();
+
+    try {
+      await fetchNotes({ token: 'test-token', clientId: 'test-client', limit: 50 });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.not.stringContaining('limit='),
+        expect.any(Object)
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('429 频率限制时等待 3 秒后重试', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => {
+      if (typeof fn === 'function') fn();
+      return 1;
+    });
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockFetchResponse({
+        success: false,
+        error: { code: 10203, message: 'too many requests', reason: 'qps' },
+      }, 429) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { notes: [], has_more: false, next_cursor: '' },
+      }) as Response);
+
+    try {
+      const result = await fetchNotes({ token: 'test-token', clientId: 'test-client' });
+
+      expect(result.notes).toEqual([]);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3000);
+    } finally {
+      timeoutSpy.mockRestore();
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('429 日配额耗尽时不重试', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => {
+      if (typeof fn === 'function') fn();
+      return 1;
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        success: false,
+        error: { code: 10203, message: 'quota exhausted', reason: 'quota_day' },
+      }, 429) as Response
+    );
+
+    try {
+      await expect(fetchNotes({ token: 'test-token', clientId: 'test-client' })).rejects.toThrow('API 配额已用完');
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(timeoutSpy).not.toHaveBeenCalled();
+    } finally {
+      timeoutSpy.mockRestore();
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});
+
+describe('web auth mode', () => {
+  it('requests the web notes endpoint with bearer and x-request-id headers', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({ h: {}, c: { list: [], has_more: false } }) as Response
+    );
+
+    try {
+      await fetchNotes({
+        token: 'web-token',
+        clientId: '',
+        authMode: 'web',
+        sinceId: '0',
+        limit: 10,
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes?limit=10&since_id=&sort=create_desc',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer web-token',
+            'x-request-id': expect.any(String),
+          }),
+        })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('reads web API list format { h, c: { list, has_more } }', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({ h: {}, c: { list: [{ note_id: 'n1', id: 'n1', prime_id: 'prime-1' }], has_more: true } }) as Response
+    );
+
+    try {
+      const result = await fetchNotes({
+        token: 'Bearer copied-token',
+        clientId: '',
+        authMode: 'web',
+        sinceId: 'cursor-1',
+      });
+
+      expect(result.hasMore).toBe(true);
+      expect(result.notes[0].note_id).toBe('n1');
+      expect((result.notes[0] as { prime_id?: string }).prime_id).toBe('prime-1');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('since_id=cursor-1'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer copied-token' }),
+        })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('fetches note detail from the web detail endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        h: {},
+        c: {
+          id: '1909428570156704824',
+          note_id: '1909428570156704824',
+          title: '网页模式详情',
+          content: 'content',
+          note_type: 'plain_text',
+          source: 'web',
+          tags: [],
+          created_at: '2026-05-15T10:00:00+08:00',
+          updated_at: '2026-05-15T10:00:00+08:00',
+        },
+      }) as Response
+    );
+
+    try {
+      const result = await fetchNoteDetail(
+        '1909428570156704824',
+        'web-token',
+        '',
+        undefined,
+        'web'
+      );
+
+      expect(result.title).toBe('网页模式详情');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes/1909428570156704824',
+        expect.objectContaining({ method: 'GET' })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('fetches link original content from the web original endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        h: {},
+        c: {
+          title: '网页原文标题',
+          url: 'https://example.com/web-source',
+          content: '网页模式链接原文全文',
+        },
+      }) as Response
+    );
+
+    try {
+      const result = await fetchNoteOriginal('prime-link-1', 'web-token', undefined, 'web');
+      expect(result).toEqual({
+        title: '网页原文标题',
+        url: 'https://example.com/web-source',
+        content: '网页模式链接原文全文',
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes/prime-link-1/original',
+        expect.objectContaining({ method: 'GET' })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('fetches append children from the paginated web children endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        mockFetchResponse({
+          h: {},
+          c: {
+            total_items: 2,
+            list: [
+              {
+                id: '1910451630291348232',
+                note_id: '1910451630291348232',
+                prime_id: 'KJp3l6ykbVEeANdP',
+                title: '',
+                content: 'hihi 18 plus',
+                note_type: 'plain_text',
+                source: 'web',
+                tags: [],
+                created_at: '2026-05-20 11:00:00',
+                updated_at: '2026-05-20 11:00:00',
+                parent_id: '1910450663922605144',
+                is_child_note: true,
+                sub_note_count: 0,
+              },
+            ],
+            has_more: true,
+          },
+        }) as Response
+      )
+      .mockResolvedValueOnce(
+        mockFetchResponse({
+          h: {},
+          c: {
+            total_items: 2,
+            list: [
+              {
+                id: '1910451630291348233',
+                note_id: '1910451630291348233',
+                prime_id: 'KJp3l6ykbVEeANdQ',
+                title: '',
+                content: 'hihi 19 plus',
+                note_type: 'plain_text',
+                source: 'web',
+                tags: [],
+                created_at: '2026-05-20 11:01:00',
+                updated_at: '2026-05-20 11:01:00',
+                parent_id: '1910450663922605144',
+                is_child_note: true,
+                sub_note_count: 0,
+              },
+            ],
+            has_more: false,
+          },
+        }) as Response
+      );
+
+    try {
+      const result = await fetchNoteChildren(
+        'WPKWeqDApaE6XrDP',
+        'web-token',
+        undefined,
+        'web'
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual(expect.objectContaining({
+        note_id: '1910451630291348232',
+        parent_id: '1910450663922605144',
+        is_child_note: true,
+        children_count: 0,
+      }));
+      expect(result[1].note_id).toBe('1910451630291348233');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes/WPKWeqDApaE6XrDP/children?limit=20&since_id=&sort=create_desc',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer web-token',
+            'x-request-id': expect.any(String),
+          }),
+        })
+      );
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes/WPKWeqDApaE6XrDP/children?limit=20&since_id=1910451630291348232&sort=create_desc',
+        expect.objectContaining({ method: 'GET' })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('surfaces a friendly web auth error when 403 body is not JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse('<html>Forbidden</html>', 403) as Response
+    );
+
+    try {
+      await expect(fetchNotes({
+        token: 'web-token',
+        clientId: '',
+        authMode: 'web',
+        sinceId: '0',
+      })).rejects.toThrow('Web Token 无效，请检查设置');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});
+
+describe('OpenAPI knowledge previews', () => {
+  it('merges created and subscribed knowledge bases', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { topics: [{ topic_id: 'created-1', name: '我创建的' }], has_more: false },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { topics: [{ topic_id: 'subscribed-1', name: '我订阅的' }], has_more: false },
+      }) as Response);
+
+    try {
+      await expect(fetchSubscribedTopics({
+        token: 'token',
+        clientId: 'client',
+        authMode: 'openapi',
+      })).resolves.toEqual([
+        { topic_id: 'created-1', name: '我创建的', source: 'created' },
+        { topic_id: 'subscribed-1', name: '我订阅的', source: 'subscribed' },
+      ]);
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('preserves topic_id on notes from created knowledge bases', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { topics: [{ topic_id: 'created-1', name: '我创建的知识库' }], has_more: false },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: {
+          notes: [{
+            note_id: 'created-note-1',
+            title: '创建型知识库笔记',
+            content: '创建型知识库正文',
+            note_type: 'plain_text',
+            created_at: '2026-06-01 10:00:00',
+            updated_at: '2026-06-01 10:00:00',
+          }],
+          has_more: false,
+        },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { bloggers: [], has_more: false },
+      }) as Response);
+
+    try {
+      const notes = await fetchSubscribedKnowledgeNotes({
+        token: 'token',
+        clientId: 'client',
+        authMode: 'openapi',
+        createdTopicIds: ['created-1'],
+      });
+
+      expect(notes[0]).toMatchObject({
+        note_id: 'created-note-1',
+        topic_id: 'created-1',
+        tags: [{ name: '我创建的知识库' }],
+      });
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('includes blogger posts from created knowledge bases', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { topics: [{ topic_id: 'created-bloggers', name: '00-订阅知识博主知识库' }], has_more: false },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { notes: [], has_more: false },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: { bloggers: [{ follow_id: 'follow_1', account_name: '抖音安全博主' }], has_more: false },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: {
+          contents: [{
+            post_id_alias: 'post_1',
+            title: '安全短视频知识',
+            summary: '短视频摘要',
+            created_at: '2026-06-01 10:00:00',
+            updated_at: '2026-06-01 10:00:00',
+          }],
+          has_more: false,
+        },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: {
+          post_id: 'post_1',
+          title: '安全短视频知识',
+          content: '短视频正文',
+          created_at: '2026-06-01 10:00:00',
+          updated_at: '2026-06-01 10:00:00',
+        },
+      }) as Response);
+
+    try {
+      const notes = await fetchSubscribedKnowledgeNotes({
+        token: 'token',
+        clientId: 'client',
+        authMode: 'openapi',
+        createdTopicIds: ['created-bloggers'],
+      });
+
+      expect(notes).toEqual([
+        expect.objectContaining({
+          note_id: 'blogger_post_1',
+          title: '安全短视频知识',
+          content: '短视频正文',
+          note_type: 'blogger_post',
+          source: 'blogger',
+          topic_id: 'created-bloggers',
+          tags: [{ name: '00-订阅知识博主知识库' }, { name: '抖音安全博主' }],
+        }),
+      ]);
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('uses account_name as the blogger display name', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: {
+          bloggers: [{ follow_id: 2113, account_name: '抖音诗词' }],
+          has_more: false,
+        },
+      }) as Response)
+      .mockResolvedValueOnce(mockFetchResponse({
+        data: {
+          contents: [{ post_id_alias: 'post-1', title: '古诗词', updated_at: '2026-06-01 10:00:00' }],
+          has_more: false,
+        },
+      }) as Response);
+
+    try {
+      const page = await fetchTopicContentPreviewPage(
+        'topic-1',
+        '金句名言',
+        'token',
+        'client',
+        'openapi'
+      );
+
+      expect(page.items[0]?.blogger_name).toBe('抖音诗词');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('keeps created knowledge-base content and tags in preview items', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(mockFetchResponse({
+      data: {
+        notes: [{
+          note_id: 'created-note-1',
+          title: '创建型知识库笔记',
+          content: '创建型知识库正文预览',
+          tags: [{ name: '原始标签' }],
+          updated_at: '2026-06-01 10:00:00',
+        }],
+        has_more: false,
+      },
+    }) as Response);
+
+    try {
+      const page = await fetchTopicContentPreviewPage(
+        'created-1',
+        '我创建的知识库',
+        'token',
+        'client',
+        'openapi',
+        undefined,
+        undefined,
+        'created'
+      );
+
+      expect(page.items[0]).toMatchObject({
+        note_id: 'created-note-1',
+        topic_id: 'created-1',
+        content: '创建型知识库正文预览',
+        tags: [{ name: '原始标签' }, { name: '我创建的知识库' }],
+      });
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});
+
+describe('createNote', () => {
+  it('creates an OpenAPI note and preserves a large returned note_id as a string', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse(
+        JSON.stringify({
+          success: true,
+          data: {
+            note: {
+              note_id: 0,
+            },
+          },
+        }).replace('"note_id":0', '"note_id":1909999999999999999')
+      ) as Response
+    );
+
+    try {
+      const result = await createNote({
+        token: 'test-token',
+        clientId: 'test-client',
+        authMode: 'openapi',
+        title: 'Local title',
+        content: 'Local body',
+        noteType: 'plain_text',
+      });
+
+      expect(result.noteId).toBe('1909999999999999999');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://openapi.biji.com/open/api/v1/resource/note/save',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token',
+            'X-Client-ID': 'test-client',
+            'Content-Type': 'application/json',
+          }),
+          body: JSON.stringify({
+            title: 'Local title',
+            content: 'Local body',
+            note_type: 'plain_text',
+            source: 'app',
+            tags: [],
+          }),
+        })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('creates a Web API note with json_content payload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        h: {},
+        c: {
+          note_id: '1911000000000000000',
+          id: '1911000000000000000',
+          prime_id: 'prime-created',
+        },
+      }) as Response
+    );
+
+    try {
+      const result = await createNote({
+        token: 'web-token',
+        clientId: '',
+        authMode: 'web',
+        title: '',
+        content: '19\n\n',
+        noteType: 'plain_text',
+      });
+
+      expect(result.noteId).toBe('1911000000000000000');
+      expect(result.detailId).toBe('prime-created');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://get-notes.luojilab.com/voicenotes/web/notes',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer web-token',
+            'Content-Type': 'application/json',
+            'x-request-id': expect.any(String),
+          }),
+          body: JSON.stringify({
+            title: '',
+            content: '19\n\n',
+            json_content: JSON.stringify({
+              type: 'doc',
+              content: [
+                {
+                  type: 'paragraph',
+                  attrs: { textAlign: null },
+                  content: [{ type: 'text', text: '19' }],
+                },
+                {
+                  type: 'paragraph',
+                  attrs: { textAlign: null },
+                },
+              ],
+            }),
+            entry_type: 'manual',
+            note_type: 'plain_text',
+            source: 'web',
+            tags: [],
+          }),
+        })
+      );
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+
+  it('creates a Web API note and preserves unquoted large ids before returning them', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockTextFetchResponse(
+        '{"h":{},"c":{"note_id":1911000000000000000,"id":1911000000000000000,"prime_id":1911000000000000001}}'
+      ) as Response
+    );
+
+    try {
+      const result = await createNote({
+        token: 'web-token',
+        clientId: '',
+        authMode: 'web',
+        title: '',
+        content: '19',
+        noteType: 'plain_text',
+      });
+
+      expect(result.noteId).toBe('1911000000000000000');
+      expect(result.detailId).toBe('1911000000000000001');
+    } finally {
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+  });
+});

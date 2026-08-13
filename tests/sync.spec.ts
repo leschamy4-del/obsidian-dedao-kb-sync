@@ -1,0 +1,684 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { App, Modal, TFile } from 'obsidian';
+import GetNoteSyncPlugin from '../src/main';
+import { ReverseSyncEngine } from '../src/reverse-sync';
+import { SyncCancelledError, SyncEngine } from '../src/sync';
+import { DEFAULT_SETTINGS } from '../src/types';
+
+describe('SyncCancelledError', () => {
+  it('has name SyncCancelledError', () => {
+    expect(new SyncCancelledError().name).toBe('SyncCancelledError');
+  });
+
+  it('has message "Sync cancelled"', () => {
+    expect(new SyncCancelledError().message).toBe('Sync cancelled');
+  });
+
+  it('is an instance of Error', () => {
+    expect(new SyncCancelledError()).toBeInstanceOf(Error);
+  });
+
+  it('is caught by instanceof check', () => {
+    try {
+      throw new SyncCancelledError();
+    } catch (err) {
+      expect(err instanceof SyncCancelledError).toBe(true);
+    }
+  });
+});
+
+describe('GetNoteSyncPlugin runSync cleanup', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makePlugin() {
+    const plugin = new GetNoteSyncPlugin(new App());
+    plugin.settings = {
+      ...DEFAULT_SETTINGS,
+      scheduledSync: { ...DEFAULT_SETTINGS.scheduledSync },
+      apiToken: 'test-token',
+      clientId: 'test-client',
+      syncHistory: [],
+    };
+    plugin.syncHistory = [];
+    return plugin;
+  }
+
+  it('manual sync failure clears syncing state', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockRejectedValue(new Error('boom'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 0, syncStartDate: '' });
+
+    expect(plugin.isSyncing).toBe(false);
+    expect(plugin.syncProgress.message).toContain('boom');
+  });
+
+  it('manual sync cancellation clears syncing state', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockRejectedValue(new SyncCancelledError());
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 0, syncStartDate: '' });
+
+    expect(plugin.isSyncing).toBe(false);
+    expect(plugin.syncProgress.message).toContain('已取消');
+  });
+
+  it('manual sync success clears syncing state immediately', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 0, syncStartDate: '' });
+
+    expect(plugin.isSyncing).toBe(false);
+    expect(plugin.currentSyncEngine).toBe(null);
+    expect(plugin.syncProgress).toEqual({ message: '', count: '', percent: 0 });
+  });
+
+  it('records knowledge-base sync mode and selected count', async () => {
+    vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSubscribedKnowledgeSync']({
+      selectedNoteIds: ['blogger_old_post'],
+      topicIds: ['topic_1'],
+      bloggerIds: ['blogger_1'],
+    });
+
+    expect(plugin.syncHistory.at(-1)).toMatchObject({
+      type: 'full',
+      mode: 'knowledge-base',
+      scope: {
+        selectedCount: 1,
+        selectedIds: ['blogger_old_post'],
+      },
+    });
+  });
+
+  it('auto sync uses selected knowledge bases instead of generic note-type folders', async () => {
+    const genericSync = vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 99,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 99,
+      items: [],
+    });
+    const kbSync = vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+    plugin.settings.scheduledSync.syncKnowledgeBases = ['kb-sub', 'kb-created'];
+    plugin.settings.knowledgeBaseCache = {
+      entries: [
+        { topicId: 'kb-sub', name: '订阅库', source: 'subscribed' },
+        { topicId: 'kb-created', name: '自建库', source: 'created' },
+      ],
+    };
+
+    await plugin['runSync']('auto', {
+      maxDays: 0,
+      syncStartDate: '2026-08-11T00:00:00.000Z',
+      syncKnowledgeBases: ['kb-sub', 'kb-created'],
+    });
+
+    expect(genericSync).not.toHaveBeenCalled();
+    expect(kbSync).toHaveBeenCalledWith(undefined, {
+      topicIds: ['kb-sub'],
+      createdTopicIds: ['kb-created'],
+      knowledgeBaseNames: {
+        'kb-sub': '订阅库',
+        'kb-created': '自建库',
+      },
+      syncAll: false,
+    });
+  });
+
+  it('does not cancel an already-running knowledge-base sync when clicked again', async () => {
+    const cancel = vi.fn();
+    const syncSpy = vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+      items: [],
+    });
+    const plugin = makePlugin();
+    plugin.isSyncing = true;
+    plugin['currentSyncKind'] = 'knowledge-base';
+    plugin['currentSyncEngine'] = { cancel };
+
+    await plugin['runSubscribedKnowledgeSync']({
+      selectedNoteIds: ['already-running'],
+      topicIds: ['topic_1'],
+    });
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(syncSpy).not.toHaveBeenCalled();
+    expect(plugin.syncHistory).toHaveLength(0);
+  });
+
+  it('queues knowledge-base sync while cancelling background auto sync', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(SyncEngine.prototype, 'sync').mockRejectedValue(new SyncCancelledError());
+    vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+    const autoSync = plugin['runSync']('auto', { maxDays: 0, syncStartDate: '2026-08-11T00:00:00.000Z' });
+
+    await plugin['runSubscribedKnowledgeSync']({
+      selectedNoteIds: ['note-after-auto'],
+      topicIds: ['topic_1'],
+    });
+
+    expect(plugin['pendingKnowledgeBaseSyncOptions']).toMatchObject({
+      selectedNoteIds: ['note-after-auto'],
+      topicIds: ['topic_1'],
+    });
+
+    await autoSync;
+    await vi.runAllTimersAsync();
+
+    expect(plugin.syncHistory.at(-1)).toMatchObject({
+      type: 'full',
+      mode: 'knowledge-base',
+      result: { created: 1, total: 1 },
+    });
+  });
+
+  it('records only start date when scope contains both date and maxDays', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 30, syncStartDate: '2026-05-09' });
+
+    expect(plugin.syncHistory.at(-1)?.scope).toEqual({
+      maxDays: 0,
+      syncStartDate: '2026-05-09',
+      selectedCount: undefined,
+      selectedIds: undefined,
+    });
+  });
+
+  it('manual sync records the note type filter from its own scope', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 0, syncStartDate: '', enabledNoteTypes: ['link'] });
+
+    expect(plugin.syncHistory.at(-1)?.scope).toEqual({
+      maxDays: 0,
+      syncStartDate: '',
+      enabledNoteTypes: ['link'],
+      selectedCount: undefined,
+      selectedIds: undefined,
+    });
+  });
+
+  it('manual sync days scope passes maxDays through engine', async () => {
+    const syncScopeOptions: unknown[] = [];
+    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+      syncScopeOptions.push(this['scopeOptions']);
+      return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0, items: [] });
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 7, syncStartDate: '' });
+
+    expect(syncScopeOptions).toEqual([
+      {
+        maxDays: 7,
+        syncStartDate: '',
+      },
+    ]);
+  });
+
+  it('manual sync date scope disables maxDays in engine', async () => {
+    const syncScopeOptions: unknown[] = [];
+    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+      syncScopeOptions.push(this['scopeOptions']);
+      return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0, items: [] });
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('full', { maxDays: 7, syncStartDate: '2026-05-09' });
+
+    expect(syncScopeOptions).toEqual([
+      {
+        maxDays: 0,
+        syncStartDate: '2026-05-09',
+      },
+    ]);
+  });
+
+  it('registers scheduled sync interval with Obsidian lifecycle', () => {
+    vi.useFakeTimers();
+    const plugin = makePlugin();
+    plugin.settings.scheduledSync = {
+      enabled: true,
+      intervalMinutes: 5,
+      syncOnStart: true,
+    };
+    const registerInterval = vi.fn();
+    Object.assign(plugin, { registerInterval });
+
+    plugin.startAutoSync();
+
+    expect(registerInterval).toHaveBeenCalledTimes(1);
+    expect(registerInterval).toHaveBeenCalledWith(expect.anything());
+  });
+
+  it('opens search in a modal instead of a workspace sidebar view', async () => {
+    const plugin = makePlugin();
+    const openModal = vi.spyOn(Modal.prototype, 'open').mockImplementation(() => {});
+    const getLeavesOfType = vi.spyOn(plugin.app.workspace, 'getLeavesOfType');
+    const getRightLeaf = vi.spyOn(plugin.app.workspace, 'getRightLeaf');
+    const revealLeaf = vi.spyOn(plugin.app.workspace, 'revealLeaf');
+
+    await plugin.openSearchView('选中文本');
+
+    expect(openModal).toHaveBeenCalledTimes(1);
+    expect(getLeavesOfType).not.toHaveBeenCalled();
+    expect(getRightLeaf).not.toHaveBeenCalled();
+    expect(revealLeaf).not.toHaveBeenCalled();
+  });
+
+  it('disables maxDays when scheduled sync resumes from last synced timestamp', async () => {
+    const syncScopeOptions: unknown[] = [];
+    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+      syncScopeOptions.push(this['scopeOptions']);
+      return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
+    });
+    const plugin = makePlugin();
+    plugin.settings.maxDays = 30;
+    plugin.settings.lastSyncEndTimestamp = '2026-05-09T10:00:00+08:00';
+    plugin.settings.scheduledSync.enabledNoteTypes = ['link'];
+
+    plugin['doAutoSync']();
+
+    await vi.waitFor(() => {
+      expect(syncScopeOptions).toEqual([
+        {
+          maxDays: 0,
+          syncStartDate: '2026-05-09T10:00:00+08:00',
+          enabledNoteTypes: ['link'],
+        },
+      ]);
+    });
+  });
+
+  it('disables maxDays when scheduled sync uses configured start date', async () => {
+    const syncScopeOptions: unknown[] = [];
+    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+      syncScopeOptions.push(this['scopeOptions']);
+      return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
+    });
+    const plugin = makePlugin();
+    plugin.settings.maxDays = 30;
+    plugin.settings.syncStartDate = '2026-05-09';
+    plugin.settings.lastSyncEndTimestamp = '';
+    plugin.settings.scheduledSync.enabledNoteTypes = ['link'];
+
+    plugin['doAutoSync']();
+
+    await vi.waitFor(() => {
+      expect(syncScopeOptions).toEqual([
+        {
+          maxDays: 0,
+          syncStartDate: '2026-05-09',
+          enabledNoteTypes: ['link'],
+        },
+      ]);
+      expect(plugin.syncHistory.at(-1)?.scope).toEqual({
+        maxDays: 0,
+        syncStartDate: '2026-05-09',
+        enabledNoteTypes: ['link'],
+        selectedCount: undefined,
+        selectedIds: undefined,
+      });
+    });
+  });
+
+  it('advances checkpoint when any note succeeds even if other notes fail', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 1,
+      total: 2,
+      items: [],
+      lastNoteTimestamp: '2026-05-10T12:00:00+08:00',
+    });
+    const plugin = makePlugin();
+    plugin.settings.lastSyncEndTimestamp = '2026-05-09T10:00:00+08:00';
+
+    await plugin['runSync']('auto', {
+      maxDays: 0,
+      syncStartDate: plugin.settings.lastSyncEndTimestamp,
+    });
+
+    // checkpoint advances because created > 0, even though failed = 1
+    expect(plugin.settings.lastSyncEndTimestamp).toBe('2026-05-10T12:00:00+08:00');
+  });
+
+  it('selected sync records the note type filter from the picker scope', async () => {
+    vi.spyOn(SyncEngine.prototype, 'syncNoteIds').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    await plugin['runSync']('selective', { maxDays: 0, syncStartDate: '', enabledNoteTypes: ['link'] }, ['note-1']);
+
+    expect(plugin.syncHistory.at(-1)?.scope).toEqual({
+      maxDays: 0,
+      syncStartDate: '',
+      enabledNoteTypes: ['link'],
+      selectedCount: 1,
+      selectedIds: ['note-1'],
+    });
+  });
+
+  it('scheduled sync does not run reverse upload', async () => {
+    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+    });
+    const reverseSyncBack = vi.spyOn(ReverseSyncEngine.prototype, 'syncBack').mockResolvedValue({
+      created: 1,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+
+    plugin['doAutoSync']();
+
+    await vi.waitFor(() => {
+      expect(SyncEngine.prototype.sync).toHaveBeenCalled();
+    });
+    expect(reverseSyncBack).not.toHaveBeenCalled();
+  });
+
+  it('runs reverse sync without requiring an upload permission switch', async () => {
+    const syncBack = vi.spyOn(ReverseSyncEngine.prototype, 'syncBack').mockResolvedValue({
+      created: 1,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [],
+    });
+    const plugin = makePlugin();
+    plugin.settings.reverseSync = { enabled: false };
+
+    await plugin['reverseSyncToGetNote']();
+
+    expect(syncBack).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(plugin.isSyncing).toBe(false);
+    });
+  });
+
+  it('uploads selected local files without scanning the whole sync folder and records upload history', async () => {
+    const syncBack = vi.spyOn(ReverseSyncEngine.prototype, 'syncBack').mockResolvedValue({
+      created: 99,
+      skipped: 0,
+      failed: 0,
+      total: 99,
+      items: [],
+    });
+    const syncFiles = vi.spyOn(ReverseSyncEngine.prototype, 'syncFiles').mockResolvedValue({
+      created: 1,
+      skipped: 0,
+      failed: 0,
+      total: 1,
+      items: [{
+        noteId: 'remote-created',
+        title: 'Upload me',
+        noteType: 'plain_text',
+        updatedAt: '2026-05-27T12:00:00.000Z',
+        status: 'created',
+      }],
+    });
+    const plugin = makePlugin();
+    plugin.settings.reverseSync = { enabled: false };
+    const selectedFiles = [new TFile('Inbox/upload-me.md')];
+
+    plugin.uploadSelectedLocalNotes(selectedFiles);
+
+    await vi.waitFor(() => {
+      expect(syncFiles).toHaveBeenCalledWith(selectedFiles);
+    });
+    expect(syncBack).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(plugin.syncHistory.at(-1)).toEqual(expect.objectContaining({
+        type: 'upload',
+        mode: 'local-upload',
+        status: 'success',
+        result: expect.objectContaining({
+          created: 1,
+          skipped: 0,
+          failed: 0,
+          total: 1,
+          items: [
+            expect.objectContaining({
+              noteId: 'remote-created',
+              title: 'Upload me',
+              status: 'created',
+            }),
+          ],
+        }),
+      }));
+      expect(plugin.isSyncing).toBe(false);
+    });
+  });
+
+  it('records failed upload history when selected local upload fails', async () => {
+    vi.spyOn(ReverseSyncEngine.prototype, 'syncFiles').mockResolvedValue({
+      created: 0,
+      skipped: 0,
+      failed: 1,
+      total: 1,
+      items: [{
+        noteId: 'Inbox/fail.md',
+        title: 'fail',
+        noteType: 'plain_text',
+        updatedAt: '2026-05-27T12:00:00.000Z',
+        status: 'failed',
+        error: 'API 服务器错误 500',
+      }],
+    });
+    const plugin = makePlugin();
+
+    plugin.uploadSelectedLocalNotes([new TFile('Inbox/fail.md')]);
+
+    await vi.waitFor(() => {
+      expect(plugin.syncHistory.at(-1)).toEqual(expect.objectContaining({
+        type: 'upload',
+        mode: 'local-upload',
+        status: 'failed',
+        error: '失败 1 篇',
+        result: expect.objectContaining({
+          items: [
+            expect.objectContaining({
+              noteId: 'Inbox/fail.md',
+              status: 'failed',
+              error: 'API 服务器错误 500',
+            }),
+          ],
+        }),
+      }));
+    });
+    expect(plugin.isSyncing).toBe(false);
+  });
+});
+
+describe('GetNoteSyncPlugin ribbon actions', () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('registers separate sync and search ribbon actions', async () => {
+    vi.useFakeTimers();
+    const plugin = new GetNoteSyncPlugin(new App());
+    Object.assign(plugin.app.vault.adapter, {
+      exists: vi.fn().mockResolvedValue(false),
+      mkdir: vi.fn(),
+      copy: vi.fn(),
+    });
+    const addRibbonIcon = vi.fn();
+    const openManualSyncModal = vi.spyOn(plugin, 'openManualSyncModal').mockImplementation(() => {});
+    const openSearchView = vi.spyOn(plugin, 'openSearchView').mockImplementation(() => {});
+    Object.assign(plugin, { addRibbonIcon });
+
+    await plugin.onload();
+
+    const syncRibbon = addRibbonIcon.mock.calls.find(([icon]) => icon === 'book-lock');
+    const searchRibbon = addRibbonIcon.mock.calls.find(([icon]) => icon === 'brain-circuit');
+
+    expect(syncRibbon).toBeDefined();
+    expect(searchRibbon).toBeDefined();
+
+    syncRibbon![2]();
+    searchRibbon![2]();
+
+    expect(openManualSyncModal).toHaveBeenCalledOnce();
+    expect(openSearchView).toHaveBeenCalledOnce();
+  });
+
+  it('registers both ribbons once and hides a disabled sync ribbon', async () => {
+    vi.useFakeTimers();
+    const plugin = new GetNoteSyncPlugin(new App());
+    Object.assign(plugin.app.vault.adapter, {
+      exists: vi.fn().mockResolvedValue(false),
+      mkdir: vi.fn(),
+      copy: vi.fn(),
+    });
+    vi.spyOn(plugin, 'loadData').mockResolvedValue({
+      ribbonActions: { sync: false, search: true },
+    });
+    const addRibbonIcon = vi.fn((_icon: string, title: string) => {
+      const el = document.createElement('div');
+      el.setAttribute('aria-label', title);
+      plugin.app.workspace.containerEl.appendChild(el);
+      return el;
+    });
+    Object.assign(plugin, { addRibbonIcon });
+
+    await plugin.onload();
+
+    expect(addRibbonIcon.mock.calls.some(([icon]) => icon === 'book-lock')).toBe(true);
+    expect(addRibbonIcon.mock.calls.some(([icon]) => icon === 'brain-circuit')).toBe(true);
+    expect(plugin.app.workspace.containerEl.querySelector('[aria-label="同步得到大脑"]')?.classList.contains('getnote-ribbon-action-hidden')).toBe(true);
+  });
+
+  it('hides an existing sync ribbon when its setting changes', async () => {
+    vi.useFakeTimers();
+    const plugin = new GetNoteSyncPlugin(new App());
+    Object.assign(plugin.app.vault.adapter, {
+      exists: vi.fn().mockResolvedValue(false),
+      mkdir: vi.fn(),
+      copy: vi.fn(),
+    });
+    const addRibbonIcon = vi.fn((_icon: string, title: string) => {
+      const el = document.createElement('div');
+      el.setAttribute('aria-label', title);
+      plugin.app.workspace.containerEl.appendChild(el);
+      return el;
+    });
+    Object.assign(plugin, { addRibbonIcon });
+
+    await plugin.onload();
+    const syncRibbon = plugin.app.workspace.containerEl.querySelector<HTMLElement>('[aria-label="同步得到大脑"]')!;
+    addRibbonIcon.mockClear();
+
+    plugin['settingsTab']!.updateSetting('ribbonActions', { sync: false, search: true });
+
+    expect(syncRibbon.classList.contains('getnote-ribbon-action-hidden')).toBe(true);
+    expect(addRibbonIcon).not.toHaveBeenCalled();
+  });
+
+  it('hides the existing search ribbon instead of rebuilding ribbon actions', async () => {
+    vi.useFakeTimers();
+    const plugin = new GetNoteSyncPlugin(new App());
+    Object.assign(plugin.app.vault.adapter, {
+      exists: vi.fn().mockResolvedValue(false),
+      mkdir: vi.fn(),
+      copy: vi.fn(),
+    });
+    const addRibbonIcon = vi.fn((_icon: string, title: string) => {
+      const el = document.createElement('div');
+      el.setAttribute('aria-label', title);
+      plugin.app.workspace.containerEl.appendChild(el);
+      return el;
+    });
+    Object.assign(plugin, { addRibbonIcon });
+
+    await plugin.onload();
+    const searchRibbon = plugin.app.workspace.containerEl.querySelector<HTMLElement>('[aria-label="搜索得到大脑"]')!;
+    addRibbonIcon.mockClear();
+
+    plugin['settingsTab']!.updateSetting('ribbonActions', { sync: true, search: false });
+
+    expect(searchRibbon.classList.contains('getnote-ribbon-action-hidden')).toBe(true);
+    expect(addRibbonIcon).not.toHaveBeenCalled();
+
+    plugin['settingsTab']!.updateSetting('ribbonActions', { sync: true, search: true });
+
+    expect(searchRibbon.classList.contains('getnote-ribbon-action-hidden')).toBe(false);
+    expect(addRibbonIcon).not.toHaveBeenCalled();
+  });
+});

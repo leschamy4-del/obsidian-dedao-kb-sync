@@ -1,0 +1,44 @@
+{
+  "name": "obsidian-dedao-kb-sync",
+  "version": "1.0.0",
+  "description": "得到大脑知识库同步：按知识库自动建文件夹并打标签，同步得到大脑与订阅的抖音博主内容到 Obsidian。衍生自 AndyZhengyan/obsidian-dedao-brain-sync（MIT）。",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:e2e:openapi": "vitest run tests/openapi-knowledge-sync.e2e.spec.ts",
+    "smoke:getnote": "node scripts/smoke-getnote-api.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "dedao",
+    "getnote",
+    "knowledge-base"
+  ],
+  "author": "Marvincao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leschamy4-del/obsidian-dedao-kb-sync.git"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.7.0",
+    "happy-dom": "^20.10.6",
+    "obsidian": "^1.13.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "preact": "^10.29.7",
+    "react": "npm:@preact/compat",
+    "react-dom": "npm:@preact/compat"
+  }
+}

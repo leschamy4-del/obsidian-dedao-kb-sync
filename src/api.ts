@@ -1,0 +1,373 @@
+// Central API entry point - delegates to client implementations based on authMode
+import { createNote as openapiCreateNote, fetchNotes as openapiFetchNotes, fetchNoteDetail as openapiFetchNoteDetail, fetchRecallSearch as openapiFetchRecallSearch, fetchSubscribedKnowledgeNotes as openapiFetchSubscribedKnowledgeNotes, fetchTopicBloggers as openapiFetchTopicBloggers, fetchTopicContentPreviewPage as openapiFetchTopicContentPreviewPage, fetchTopicContentPreviews as openapiFetchTopicContentPreviews, fetchSubscribedTopics as openapiFetchSubscribedTopics } from './api-clients/openapi-client';
+import { createNote as webapiCreateNote, fetchNotes as webapiFetchNotes, fetchNoteChildren as webapiFetchNoteChildren, fetchNoteDetail as webapiFetchNoteDetail, fetchNoteOriginal as webapiFetchNoteOriginal, fetchSubscribedKnowledgeNotes as webapiFetchSubscribedKnowledgeNotes, fetchTopicContentPreviewPage as webapiFetchTopicContentPreviewPage, fetchTopicContentPreviews as webapiFetchTopicContentPreviews, fetchSubscribedTopics as webapiFetchSubscribedTopics } from './api-clients/webapi-client';
+import type { GetNoteNote, AuthMode, LinkOriginal, RecallSearchResult, SubscribedTopic } from './types';
+import type { Blogger } from './api-clients/openapi-client';
+import { t } from './i18n';
+
+export const GETNOTE_LIST_LIMIT = 20;
+
+export interface FetchNotesOptions {
+  token: string;
+  clientId: string;
+  sinceId?: string;
+  limit?: number;
+  signal?: AbortSignal;
+  authMode?: AuthMode;
+  webCsrfToken?: string;
+  topicIds?: string[];
+  createdTopicIds?: string[];
+  bloggerIds?: string[];
+  selectedNoteIds?: string[];
+  onNotes?: (notes: GetNoteNote[]) => void | Promise<void>;
+  /**
+   * 单个知识库拉取失败时回调（如 403 无权限 / 429 限流 / 网络错误）。
+   * 传入后，插件会对每个库单独隔离错误、继续同步其余库，而不是一错全崩；
+   * 调用方可用它把"无权限的库"汇总进同步结果，让用户从同步历史看到。
+   */
+  onTopicError?: (topic: SubscribedTopic, error: unknown) => void;
+}
+
+export async function fetchNotes(options: FetchNotesOptions): Promise<{
+  notes: GetNoteNote[];
+  hasMore: boolean;
+}> {
+  const { token, clientId, authMode } = options;
+  if (authMode === 'web') {
+    return webapiFetchNotes({ token, sinceId: options.sinceId, limit: options.limit, signal: options.signal });
+  }
+  return openapiFetchNotes({ token, clientId, sinceId: options.sinceId, limit: options.limit, signal: options.signal });
+}
+
+export async function fetchRecallSearch(options: {
+  query: string;
+  token: string;
+  clientId: string;
+  authMode?: AuthMode;
+  topK?: number;
+  signal?: AbortSignal;
+}): Promise<RecallSearchResult[]> {
+  if (options.authMode === 'web') {
+    throw new Error(t('search.openapiOnly'));
+  }
+  return openapiFetchRecallSearch({
+    query: options.query,
+    token: options.token,
+    clientId: options.clientId,
+    topK: options.topK,
+    signal: options.signal,
+  });
+}
+
+export async function fetchNoteDetail(
+  id: string,
+  token: string,
+  clientId: string,
+  signal?: AbortSignal,
+  authMode?: AuthMode,
+  _csrfToken?: string // kept for API compatibility, unused
+): Promise<Partial<GetNoteNote>> {
+  if (authMode === 'web') {
+    return webapiFetchNoteDetail(id, token, signal);
+  }
+  return openapiFetchNoteDetail(id, token, clientId, signal);
+}
+
+export async function fetchNoteOriginal(
+  id: string,
+  token: string,
+  signal?: AbortSignal,
+  authMode?: AuthMode
+): Promise<LinkOriginal | null> {
+  if (authMode !== 'web') return null;
+  return webapiFetchNoteOriginal(id, token, signal);
+}
+
+export async function fetchNoteChildren(
+  parentPrimeId: string,
+  token: string,
+  signal?: AbortSignal,
+  authMode?: AuthMode
+): Promise<GetNoteNote[]> {
+  if (authMode !== 'web') return [];
+  return webapiFetchNoteChildren(parentPrimeId, token, signal);
+}
+
+export async function fetchSubscribedTopics(options: { token: string; clientId: string; authMode?: AuthMode; signal?: AbortSignal }): Promise<SubscribedTopic[]> {
+  if (options.authMode === 'web') {
+    return webapiFetchSubscribedTopics(options.token, options.signal);
+  }
+  return openapiFetchSubscribedTopics(options.token, options.clientId, options.signal);
+}
+
+export async function fetchSubscribedKnowledgeNotes(options: FetchNotesOptions): Promise<GetNoteNote[]> {
+  if (options.authMode === 'web') {
+    return webapiFetchSubscribedKnowledgeNotes({
+      token: options.token,
+      sinceId: options.sinceId,
+      limit: options.limit,
+      signal: options.signal,
+      topicIds: options.topicIds,
+      selectedNoteIds: options.selectedNoteIds,
+      onTopicError: options.onTopicError,
+    });
+  }
+  return openapiFetchSubscribedKnowledgeNotes({
+    token: options.token,
+    clientId: options.clientId,
+    sinceId: options.sinceId,
+    limit: options.limit,
+    signal: options.signal,
+    topicIds: options.topicIds,
+    createdTopicIds: options.createdTopicIds,
+    bloggerIds: options.bloggerIds,
+    selectedNoteIds: options.selectedNoteIds,
+    onNotes: options.onNotes,
+    onTopicError: options.onTopicError,
+  });
+}
+
+export interface ContentPreview {
+  note_id: string;
+  title: string;
+  updated_at: string;
+  blogger_name?: string;
+  topic_id?: string;
+  blogger_id?: string;
+  summary?: string;
+  content?: string;
+  tags?: { name: string }[];
+}
+
+export interface TopicContentPreviewOptions {
+  maxPages?: number;
+  maxBloggers?: number;
+}
+
+export interface TopicContentPreviewCursor {
+  bloggerIndex: number;
+  page: number;
+}
+
+export interface TopicContentPreviewPage {
+  items: ContentPreview[];
+  nextCursor?: TopicContentPreviewCursor;
+}
+
+export async function fetchTopicBloggers(
+  topicId: string,
+  token: string,
+  clientId: string,
+  authMode?: AuthMode,
+  signal?: AbortSignal
+): Promise<Blogger[]> {
+  if (authMode !== 'openapi') return [];
+  return openapiFetchTopicBloggers(topicId, token, clientId, signal);
+}
+
+export async function fetchTopicContentPreviews(
+  topicId: string,
+  topicName: string | undefined,
+  token: string,
+  clientId: string,
+  authMode?: AuthMode,
+  signal?: AbortSignal,
+  options?: TopicContentPreviewOptions
+): Promise<ContentPreview[]> {
+  if (authMode === 'web') {
+    return webapiFetchTopicContentPreviews(topicId, token, signal, options);
+  }
+  return openapiFetchTopicContentPreviews(topicId, topicName, token, clientId, signal, options);
+}
+
+export async function fetchTopicContentPreviewPage(
+  topicId: string,
+  topicName: string | undefined,
+  token: string,
+  clientId: string,
+  authMode?: AuthMode,
+  signal?: AbortSignal,
+  cursor?: TopicContentPreviewCursor,
+  topicSource?: SubscribedTopic['source']
+): Promise<TopicContentPreviewPage> {
+  if (authMode === 'web') {
+    return webapiFetchTopicContentPreviewPage(topicId, token, signal, cursor);
+  }
+  return openapiFetchTopicContentPreviewPage(topicId, topicName, token, clientId, signal, cursor, topicSource);
+}
+
+
+export interface CreateNoteOptions {
+  token: string;
+  clientId: string;
+  authMode?: AuthMode;
+  title: string;
+  content: string;
+  noteType: string;
+  tags?: string[];
+  signal?: AbortSignal;
+}
+
+export interface CreateNoteResult {
+  noteId: string;
+  detailId?: string;
+}
+
+export async function createNote(options: CreateNoteOptions): Promise<CreateNoteResult> {
+  if (options.authMode === 'web') {
+    return webapiCreateNote({
+      token: options.token,
+      title: options.title,
+      content: options.content,
+      noteType: options.noteType,
+      tags: options.tags,
+      signal: options.signal,
+    });
+  }
+  return openapiCreateNote({
+    token: options.token,
+    clientId: options.clientId,
+    title: options.title,
+    content: options.content,
+    noteType: options.noteType,
+    tags: options.tags,
+    signal: options.signal,
+  });
+}
+
+export async function* fetchAllNotes(
+  token: string,
+  clientId: string,
+  signal?: AbortSignal,
+  startCursor?: string | null,
+  authMode?: AuthMode,
+  _csrfToken?: string
+): AsyncGenerator<GetNoteNote[]> {
+  let cursor = startCursor && startCursor !== '0' ? startCursor : '0';
+  while (true) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const { notes, hasMore } = await fetchNotes({ token, clientId, sinceId: cursor, signal, authMode });
+    if (notes.length > 0) yield notes;
+    if (!hasMore || notes.length === 0) break;
+    cursor = notes[notes.length - 1].note_id;
+  }
+}
+
+// === OAuth functions (OpenAPI only) ===
+
+function safeJsonParse(text: string): unknown {
+  const safe = text.replace(
+    /"(id|note_id|parent_id|follow_id|live_id)"\s*:\s*(\d+)/g,
+    '"$1":"$2"'
+  );
+  return JSON.parse(safe);
+}
+
+const BASE_URL = 'https://openapi.biji.com/open/api/v1';
+
+export interface OAuthDeviceCodeResponse {
+  verification_uri: string;
+  user_code: string;
+  code: string;
+  interval: number;
+}
+
+export interface OAuthTokenResponse {
+  api_key: string;
+  client_id: string;
+}
+
+export async function fetchOAuthDeviceCode(signal?: AbortSignal): Promise<OAuthDeviceCodeResponse> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const res = await fetch(`${BASE_URL}/oauth/device/code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: 'cli_a1b2c3d4e5f6789012345678abcdef90' }),
+    signal,
+  });
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  if (res.status < 200 || res.status >= 300) {
+    const text = await res.text();
+    throw new Error(t('error.oauthDeviceCodeFailed', { status: res.status, msg: text }));
+  }
+  const text = await res.text();
+  const json = safeJsonParse(text) as Record<string, unknown>;
+  if (json.success === false) {
+    const err = (json.error ?? json) as Record<string, unknown>;
+    const code = err?.code as number | undefined;
+    if (code === 10201) throw new Error(t('error.openApiNotMember'));
+    throw new Error(t('error.oauthDeviceCodeFailed', { status: res.status, msg: (json.message as string) ?? 'unknown' }));
+  }
+  const source = (json.data ?? json) as Record<string, unknown>;
+  if (!source.code && !source.verification_uri) {
+    throw new Error(t('error.oauthDeviceCodeFailed', { status: res.status, msg: (json.message as string) ?? 'unknown' }));
+  }
+  return {
+    verification_uri: source.verification_uri as string,
+    user_code: source.user_code as string,
+    code: (source.code as string) ?? (source.device_code as string),
+    interval: (source.interval as number) ?? 5,
+  };
+}
+
+function parseOAuthTokenResponse(json: Record<string, unknown>): { status: number; message: string; apiKey: string; clientId: string; isSuccess: boolean } {
+  const inner = (json.data ?? json) as Record<string, unknown>;
+  const dataMsg = inner.msg as string | undefined;
+  if (dataMsg === 'authorization_pending') return { status: 10012, message: '', apiKey: '', clientId: '', isSuccess: false };
+  if (dataMsg === 'expired_token') return { status: 10013, message: t('error.oauthExpired'), apiKey: '', clientId: '', isSuccess: false };
+  if (dataMsg === 'rejected') return { status: 10014, message: t('error.oauthRejected'), apiKey: '', clientId: '', isSuccess: false };
+  const apiKey = (inner.api_key as string) ?? (inner.apiKey as string) ?? (json.api_key as string) ?? '';
+  const clientId = (inner.client_id as string) ?? (inner.clientId as string) ?? (json.client_id as string) ?? '';
+  const message = (json.message as string) ?? (inner.message as string) ?? '';
+  if (apiKey && clientId) return { status: 0, message: '', apiKey, clientId, isSuccess: true };
+  const status = json.status as number | undefined ?? -1;
+  return { status, message, apiKey: '', clientId: '', isSuccess: false };
+}
+
+export async function pollOAuthToken(code: string, interval: number, signal?: AbortSignal): Promise<OAuthTokenResponse> {
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const res = await fetch(`${BASE_URL}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'device_code', client_id: 'cli_a1b2c3d4e5f6789012345678abcdef90', code }),
+      signal,
+    });
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (res.status < 200 || res.status >= 300) {
+      const text = await res.text();
+      throw new Error(t('error.apiFailed', { status: res.status, msg: text }));
+    }
+    const text = await res.text();
+    const json = safeJsonParse(text) as Record<string, unknown>;
+    if (json.success === false) {
+      const err = (json.error ?? json) as Record<string, unknown>;
+      const code = err?.code as number | undefined;
+      if (code === 10201) throw new Error(t('error.openApiNotMember'));
+      if (code === 10202) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(() => resolve(), 3000);
+          signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); });
+        });
+        continue;
+      }
+    }
+    const parsed = parseOAuthTokenResponse(json);
+    if (parsed.isSuccess) return { api_key: parsed.apiKey, client_id: parsed.clientId };
+    if (parsed.status === 10012) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => resolve(), interval * 1000);
+        signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); });
+      });
+      continue;
+    }
+    if (parsed.status === 10013) throw new Error(t('error.oauthExpired'));
+    if (parsed.status === 10014) throw new Error(t('error.oauthRejected'));
+    const rawMsg = JSON.stringify(json).slice(0, 200);
+    const baseErr = t('error.oauthUnknown', { status: parsed.status });
+    const withMsg = parsed.message ? `${parsed.message} ${baseErr}` : baseErr;
+    throw new Error(`${withMsg} (${rawMsg})`);
+  }
+  throw new Error(t('error.oauthTimeout'));
+}
