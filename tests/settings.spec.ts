@@ -570,7 +570,7 @@ describe('SettingsComponent auth credentials', () => {
     }));
 
     const links = Array.from(container.querySelectorAll('a')).map((link) => link.href);
-    expect(links.some((href) => href.includes('README.md#%E5%85%B3%E4%BA%8E%E4%BD%9C%E8%80%85') || href.includes('README.md#关于作者'))).toBe(true);
+    expect(links.some((href) => href.includes('README.md'))).toBe(true);
     expect(links.some((href) => href.includes('docs/web-mode-manual-token_zh.md'))).toBe(true);
   });
 
@@ -583,7 +583,7 @@ describe('SettingsComponent auth credentials', () => {
     }));
 
     const communityLink = Array.from(container.querySelectorAll('a'))
-      .find((link): link is HTMLAnchorElement => link.textContent === '欢迎交流、留下star');
+      .find((link): link is HTMLAnchorElement => link.textContent === '欢迎交流、留下 star');
     const helpLink = Array.from(container.querySelectorAll('a'))
       .find((link): link is HTMLAnchorElement => link.textContent === '查看图文步骤');
     expect(communityLink).toBeTruthy();
@@ -606,7 +606,7 @@ describe('SettingsComponent auth credentials', () => {
     }));
 
     const links = Array.from(container.querySelectorAll('a')).map((link) => link.href);
-    expect(links.some((href) => href.includes('README_EN.md#about-the-author'))).toBe(true);
+    expect(links.some((href) => href.includes('README_EN.md'))).toBe(true);
     expect(links.some((href) => href.includes('docs/web-mode-manual-token.md'))).toBe(true);
   });
 

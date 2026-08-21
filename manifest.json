@@ -1,8 +1,8 @@
 {
   "id": "dedao-kb-sync",
   "name": "Dedao KB Sync",
-  "version": "1.0.2",
-  "description": "Sync notes and subscribed blogger content from Dedao Brain (GetNotes) into your vault with folders and tags.",
+  "version": "1.0.3",
+  "description": "Sync selected Dedao Brain knowledge bases and subscribed blogger notes into folder-based Markdown notes.",
   "author": "Marvincao",
   "authorUrl": "https://github.com/leschamy4-del",
   "isDesktopOnly": true,

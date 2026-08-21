@@ -1,6 +1,6 @@
 {
   "name": "obsidian-dedao-kb-sync",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "得到大脑知识库同步：按知识库自动建文件夹并打标签，同步得到大脑与订阅的抖音博主内容到 Obsidian。衍生自 AndyZhengyan/obsidian-dedao-brain-sync（MIT）。",
   "main": "main.js",
   "scripts": {

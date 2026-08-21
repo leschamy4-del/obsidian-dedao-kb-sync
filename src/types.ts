@@ -106,10 +106,10 @@ export interface AttachmentImportSettings {
 }
 
 export const DEFAULT_ATTACHMENT_IMPORT: AttachmentImportSettings = {
-  image: true,
-  audio: true,
-  video: true,
-  document: true,
+  image: false,
+  audio: false,
+  video: false,
+  document: false,
 };
 
 export interface ApiQuotaState {
@@ -131,6 +131,7 @@ export interface Settings {
   folderName: string;
   filenamePrefix: string;
   filenamePrefixMigrationVersion?: number;
+  attachmentImportMigrationVersion?: number;
   templateFilePath: string;
   maxDays: number;
   syncStartDate: string;  // ISO date string, empty means no limit
@@ -225,6 +226,7 @@ export const DEFAULT_SETTINGS: Settings = {
   folderName: '得到大脑',
   filenamePrefix: 'YYYY年MM月DD日',
   filenamePrefixMigrationVersion: 1,
+  attachmentImportMigrationVersion: 1,
   templateFilePath: '',
   maxDays: 30,
   syncStartDate: '',

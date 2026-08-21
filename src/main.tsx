@@ -19,6 +19,7 @@ import { SearchPanel, findSyncedNoteFile } from './ui/search-view';
 const MAX_SYNC_HISTORY = 20;
 const TAG_MIGRATION_VERSION = 2;
 const FILENAME_PREFIX_MIGRATION_VERSION = 1;
+const ATTACHMENT_IMPORT_MIGRATION_VERSION = 1;
 const LEGACY_PLUGIN_IDS = ['obsidian-getnote-importer', 'getnote-importer'] as const;
 const PLUGIN_DATA_FILE = 'data.json';
 const LEGACY_PLUGIN_MIGRATION_NOTICE = '已经从旧的 GetNote Importer 迁移成功，请手动停止和卸载 GetNote Importer';
@@ -179,6 +180,7 @@ export default class GetNoteSyncPlugin extends Plugin {
       },
       reverseSync: { ...DEFAULT_SETTINGS.reverseSync, ...loaded?.reverseSync },
       ribbonActions: { ...DEFAULT_SETTINGS.ribbonActions, ...loaded?.ribbonActions },
+      attachmentImport: { ...DEFAULT_SETTINGS.attachmentImport, ...loaded?.attachmentImport },
       syncHistory: normalizeSyncHistory(loaded?.syncHistory),
     };
     const shouldMigrateFilenamePrefix = Boolean(
@@ -189,8 +191,21 @@ export default class GetNoteSyncPlugin extends Plugin {
     if (shouldMigrateFilenamePrefix) {
       this.settings.filenamePrefix = DEFAULT_SETTINGS.filenamePrefix;
     }
+    const shouldMigrateAttachmentImport = Boolean(
+      loaded
+      && (loaded.attachmentImportMigrationVersion ?? 0) < ATTACHMENT_IMPORT_MIGRATION_VERSION
+    );
+    if (shouldMigrateAttachmentImport) {
+      this.settings.attachmentImport = { ...DEFAULT_SETTINGS.attachmentImport };
+    }
     this.settings.filenamePrefixMigrationVersion = FILENAME_PREFIX_MIGRATION_VERSION;
-    if (shouldMigrateFilenamePrefix || loaded?.filenamePrefixMigrationVersion !== FILENAME_PREFIX_MIGRATION_VERSION) {
+    this.settings.attachmentImportMigrationVersion = ATTACHMENT_IMPORT_MIGRATION_VERSION;
+    if (
+      shouldMigrateFilenamePrefix
+      || shouldMigrateAttachmentImport
+      || loaded?.filenamePrefixMigrationVersion !== FILENAME_PREFIX_MIGRATION_VERSION
+      || loaded?.attachmentImportMigrationVersion !== ATTACHMENT_IMPORT_MIGRATION_VERSION
+    ) {
       await this.saveSettings();
     }
     this.syncHistory = this.settings.syncHistory;
@@ -542,10 +557,14 @@ export default class GetNoteSyncPlugin extends Plugin {
   private doAutoSync(): void {
     // Auto sync uses lastSyncEndTimestamp as cutoff: skip notes already synced last time.
     // This IS the early-exit mechanism — no separate lastSyncEndTimestamp logic needed in engine.
+    const syncKnowledgeBases = this.settings.scheduledSync.syncKnowledgeBases;
+    if (!syncKnowledgeBases?.length) {
+      console.warn('[DedaoBrain] Scheduled sync skipped: no knowledge bases selected.');
+      return;
+    }
     const syncStartDate = this.settings.lastSyncEndTimestamp || this.settings.syncStartDate;
     const enabledNoteTypes = this.settings.scheduledSync.enabledNoteTypes;
     const syncTags = this.settings.syncTags;
-    const syncKnowledgeBases = this.settings.scheduledSync.syncKnowledgeBases;
     const knowledgeBaseNames = this.settings.scheduledSync.syncKnowledgeBases?.length
       ? Object.fromEntries(
           (this.settings.knowledgeBaseCache?.entries ?? [])

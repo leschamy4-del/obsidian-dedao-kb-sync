@@ -508,7 +508,7 @@ export function SettingsComponent({
   return (
     <div className="getnote-settings-react">
       <div className="getnote-settings-header">
-        <h2>{t('settings.title')} <span className="getnote-settings-author">by 朱美丹 · 衍生自 Andy Zheng 的 obsidian-dedao-brain-sync</span></h2>
+        <h2>{t('settings.title')} <span className="getnote-settings-author">by Marvincao · 衍生自 Andy Zheng 的 Dedao Brain Sync</span></h2>
         <p className="getnote-settings-desc">
           {t('settings.desc')} <ExternalLink href={t('settings.communityUrl')}>{t('settings.community')}</ExternalLink>
         </p>
