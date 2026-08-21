@@ -1,0 +1,12 @@
+Dedao KB Sync is derived from obsidian-dedao-brain-sync:
+
+https://github.com/AndyZhengyan/obsidian-dedao-brain-sync
+
+Original project copyright:
+
+Copyright (c) 2026 Andy Zheng (AndyZhengyan)
+
+The original project is licensed under the MIT License. This derivative plugin
+preserves attribution to the original author and adds knowledge-base folder
+sync, subscribed blogger filing, no-asset defaults, and transcript rendering
+changes for Dedao Brain / GetNote workflows.
