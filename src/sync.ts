@@ -802,7 +802,10 @@ export class SyncEngine {
       if (needsAudioDetail && !isAttachmentTypeEnabled(this.settings.attachmentImport, 'audio')) {
         enrichedNote = {
           ...enrichedNote,
-          audio: undefined,
+          // `attachmentImport.audio` controls whether the binary MP3 is downloaded.
+          // It must not remove `note.audio`, because GetNote/Dedao uses that field
+          // for the speech-to-text transcript. Users can disable MP3 import while
+          // still expecting the transcript to be rendered into the main Markdown note.
           attachments: enrichedNote.attachments?.filter(attachment => attachment.type !== 'audio'),
         };
       }
@@ -840,7 +843,10 @@ export class SyncEngine {
         if (path) assetPaths.push(path);
       }
 
-      if (enrichedNote.linkOriginal?.content.trim()) {
+      if (
+        enrichedNote.linkOriginal?.content.trim() &&
+        isAttachmentTypeEnabled(this.settings.attachmentImport, 'document')
+      ) {
         const originalPath = await this.writeLinkOriginalAsset(enrichedNote, categoryOverride);
         if (originalPath) {
           enrichedNote.linkOriginalFileName = `${this.getAudioAssetBaseName(enrichedNote)}_original`;

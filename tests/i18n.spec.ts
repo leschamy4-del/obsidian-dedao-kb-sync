@@ -6,32 +6,32 @@ import { join } from 'path';
 describe('initI18n', () => {
   it('sets locale to zh for zh-CN', () => {
     i18n.initI18n('zh-CN');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('得到大脑知识库同步');
   });
 
   it('sets locale to zh for zh-TW', () => {
     i18n.initI18n('zh-TW');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('得到大脑知识库同步');
   });
 
   it('sets locale to zh for Chinese locale string', () => {
     i18n.initI18n('简体中文');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('得到大脑知识库同步');
   });
 
   it('sets locale to en for en', () => {
     i18n.initI18n('en');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('Dedao KB Sync');
   });
 
   it('sets locale to en for en-US', () => {
     i18n.initI18n('en-US');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('Dedao KB Sync');
   });
 
   it('sets locale to en for unknown locale', () => {
     i18n.initI18n('fr-FR');
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('Dedao KB Sync');
   });
 });
 
@@ -41,15 +41,15 @@ describe('t() - Chinese translations', () => {
   });
 
   it('returns Chinese for settings.title', () => {
-    expect(i18n.t('settings.title')).toBe('⏪ 得到大脑（原Get笔记）Sync');
+    expect(i18n.t('settings.title')).toBe('得到大脑知识库同步');
   });
 
   it('returns Chinese for settings.desc', () => {
-    expect(i18n.t('settings.desc')).toBe('得到大脑（原Get笔记） ↔ Obsidian，一键同步无负担，');
+    expect(i18n.t('settings.desc')).toBe('得到大脑（原Get笔记） ↔ Obsidian 知识库同步，按知识库自动建文件夹并打标签，');
   });
 
   it('returns Chinese for settings.community', () => {
-    expect(i18n.t('settings.community')).toBe('欢迎交流、留下star');
+    expect(i18n.t('settings.community')).toBe('欢迎交流、留下 star');
   });
 
   it('returns Chinese GitHub documentation links', () => {
@@ -96,7 +96,7 @@ describe('t() - English translations', () => {
   });
 
   it('returns English for settings.desc', () => {
-    expect(i18n.t('settings.desc')).toBe('得到大脑（原Get笔记） ↔ Obsidian, one-click sync');
+    expect(i18n.t('settings.desc')).toBe('得到大脑（原Get笔记） ↔ Obsidian knowledge-base sync: auto folder per KB with tags');
   });
 
   it('returns English for settings.community', () => {

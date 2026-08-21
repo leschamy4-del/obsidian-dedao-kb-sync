@@ -328,7 +328,7 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
 
   it('disables maxDays when scheduled sync resumes from last synced timestamp', async () => {
     const syncScopeOptions: unknown[] = [];
-    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+    vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockImplementation(function (this: SyncEngine) {
       syncScopeOptions.push(this['scopeOptions']);
       return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
     });
@@ -336,6 +336,7 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
     plugin.settings.maxDays = 30;
     plugin.settings.lastSyncEndTimestamp = '2026-05-09T10:00:00+08:00';
     plugin.settings.scheduledSync.enabledNoteTypes = ['link'];
+    plugin.settings.scheduledSync.syncKnowledgeBases = ['kb-1'];
 
     plugin['doAutoSync']();
 
@@ -345,6 +346,8 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
           maxDays: 0,
           syncStartDate: '2026-05-09T10:00:00+08:00',
           enabledNoteTypes: ['link'],
+          syncKnowledgeBases: ['kb-1'],
+          knowledgeBaseNames: {},
         },
       ]);
     });
@@ -352,7 +355,7 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
 
   it('disables maxDays when scheduled sync uses configured start date', async () => {
     const syncScopeOptions: unknown[] = [];
-    vi.spyOn(SyncEngine.prototype, 'sync').mockImplementation(function (this: SyncEngine) {
+    vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockImplementation(function (this: SyncEngine) {
       syncScopeOptions.push(this['scopeOptions']);
       return Promise.resolve({ created: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
     });
@@ -361,6 +364,7 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
     plugin.settings.syncStartDate = '2026-05-09';
     plugin.settings.lastSyncEndTimestamp = '';
     plugin.settings.scheduledSync.enabledNoteTypes = ['link'];
+    plugin.settings.scheduledSync.syncKnowledgeBases = ['kb-1'];
 
     plugin['doAutoSync']();
 
@@ -370,6 +374,8 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
           maxDays: 0,
           syncStartDate: '2026-05-09',
           enabledNoteTypes: ['link'],
+          syncKnowledgeBases: ['kb-1'],
+          knowledgeBaseNames: {},
         },
       ]);
       expect(plugin.syncHistory.at(-1)?.scope).toEqual({
@@ -427,7 +433,14 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
   });
 
   it('scheduled sync does not run reverse upload', async () => {
-    vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+    const genericSync = vi.spyOn(SyncEngine.prototype, 'sync').mockResolvedValue({
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+    });
+    const kbSync = vi.spyOn(SyncEngine.prototype, 'syncSubscribedKnowledge').mockResolvedValue({
       created: 0,
       updated: 0,
       skipped: 0,
@@ -442,12 +455,14 @@ describe('GetNoteSyncPlugin runSync cleanup', () => {
       items: [],
     });
     const plugin = makePlugin();
+    plugin.settings.scheduledSync.syncKnowledgeBases = ['kb-1'];
 
     plugin['doAutoSync']();
 
     await vi.waitFor(() => {
-      expect(SyncEngine.prototype.sync).toHaveBeenCalled();
+      expect(kbSync).toHaveBeenCalled();
     });
+    expect(genericSync).not.toHaveBeenCalled();
     expect(reverseSyncBack).not.toHaveBeenCalled();
   });
 

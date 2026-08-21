@@ -2595,7 +2595,7 @@ describe('SyncEngine — selective sync cancellation', () => {
       }
     });
 
-    it('禁用音频导入时不会保留会渲染成断链的音频字段', async () => {
+    it('禁用音频导入时不下载 MP3，但保留转写文本给主笔记渲染', async () => {
       const app = makeMockApp();
       const engine = new SyncEngine(app as any, makeSettings({
         attachmentImport: { image: true, audio: false, video: true, document: true },
@@ -2608,7 +2608,7 @@ describe('SyncEngine — selective sync cancellation', () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockFetchResponse({
         data: {
           ...note,
-          audio: { duration: 10 },
+          audio: { duration: 10, original: '这是语音转文字原文。' },
           attachments: [
             { type: 'audio', url: 'https://cdn.example.com/audio.mp3', title: 'audio' },
           ],
@@ -2619,9 +2619,10 @@ describe('SyncEngine — selective sync cancellation', () => {
         // @ts-expect-error private helper is tested directly
         const enriched = await engine['enrichAudioNote'](note, new AbortController().signal);
 
-        expect(enriched.audio).toBeUndefined();
+        expect(enriched.audio).toBe('这是语音转文字原文。');
         expect(enriched.attachments).not.toContainEqual(expect.objectContaining({ type: 'audio' }));
         expect(enriched.assetFileName).toBeUndefined();
+        expect(enriched.assetPaths).toBeUndefined();
       } finally {
         vi.mocked(globalThis.fetch).mockRestore();
       }
