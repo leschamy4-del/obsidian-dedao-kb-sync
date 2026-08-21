@@ -1,8 +1,10 @@
-# 得到大脑知识库同步（Dedao KB Sync）
+# Dedao KB Sync
 
 [English](./README_EN.md)
 
-一个面向得到大脑（原 Get 笔记）会员的 Obsidian 插件：把选定的得到大脑知识库、订阅专题和订阅博主内容同步为本地 Markdown，并按知识库与博主自动建立文件夹。
+Dedao KB Sync is an Obsidian plugin for Dedao Brain / GetNote members. It syncs selected Dedao Brain knowledge bases, subscribed topics, and subscribed blogger content into local Markdown files, organized by knowledge base and blogger folders.
+
+中文说明：这是一个面向得到大脑（原 Get 笔记）会员的 Obsidian 插件：把选定的得到大脑知识库、订阅专题和订阅博主内容同步为本地 Markdown，并按知识库与博主自动建立文件夹。
 
 > 本插件衍生自 [AndyZhengyan/obsidian-dedao-brain-sync](https://github.com/AndyZhengyan/obsidian-dedao-brain-sync)（MIT 协议）。当前仓库重点补齐“按知识库组织”和“订阅博主归档”能力，并保留原项目的同步、搜索、模板、反向上传等基础能力。
 
