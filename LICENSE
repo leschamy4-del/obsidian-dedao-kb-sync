@@ -1,7 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Andy Zheng (AndyZhengyan)
-Copyright (c) 2026 朱美丹
+Copyright (c) 2026 Marvincao
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-本插件为 [obsidian-dedao-brain-sync](https://github.com/AndyZhengyan/obsidian-dedao-brain-sync)
-（MIT，原作者 Andy Zheng）的衍生作品，新增「按知识库自动建文件夹并打标签」能力，
-保留原作者版权署名。
