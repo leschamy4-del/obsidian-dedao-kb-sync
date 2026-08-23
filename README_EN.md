@@ -1,6 +1,6 @@
 # Dedao KB Sync
 
-[中文](./README.md)
+[中文](./README_ZH.md)
 
 Dedao KB Sync is an Obsidian plugin for Dedao Brain / GetNote members. It syncs selected Dedao Brain knowledge bases, subscribed topics, and subscribed blogger content into local Markdown files, organized by knowledge base and blogger folders.
 
