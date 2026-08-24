@@ -260,7 +260,7 @@ export default class GetNoteSyncPlugin extends Plugin {
     // Always run the hourly quota check so the banner clears at UTC+8 midnight
     // even for users who never enable auto-sync.
     if (this.quotaTickIntervalId === undefined) {
-      this.quotaTickIntervalId = window.setInterval(() => this.clearStaleQuotaState(), 60 * 60 * 1000);
+      this.quotaTickIntervalId = window.setInterval(() => { void this.clearStaleQuotaState(); }, 60 * 60 * 1000);
       this.registerInterval(this.quotaTickIntervalId);
     }
 

@@ -509,8 +509,10 @@ export class SyncEngine {
     const frontmatter = cached?.frontmatter ?? {};
 
     if (kbName) {
-      const currentKb = frontmatter['kb'];
-      const currentTags = frontmatter['tags'];
+      // metadataCache frontmatter is Record<string, any>; narrow to unknown to
+      // keep the comparison safe without unsafe any assignments.
+      const currentKb: unknown = frontmatter['kb'];
+      const currentTags: unknown = frontmatter['tags'];
       if (currentKb !== kbName || !this.frontmatterHasKnowledgeBaseTag(currentTags, kbName)) {
         return true;
       }

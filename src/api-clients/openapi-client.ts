@@ -409,7 +409,7 @@ async function fetchCreatedTopicNotes(topic: SubscribedTopic, token: string, cli
         return {
           ...value,
           id: value.note_id,
-          note_id: String(value.note_id ?? ''),
+          note_id: typeof value.note_id === 'string' || typeof value.note_id === 'number' ? String(value.note_id) : '',
           title: typeof value.title === 'string' ? value.title : '',
           content: typeof value.content === 'string' ? value.content : '',
           note_type: typeof value.note_type === 'string' ? value.note_type : 'plain_text',

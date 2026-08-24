@@ -187,7 +187,7 @@ function findTopicByAlias(rawTopics: unknown[], topicId: string): Record<string,
   for (const t of rawTopics) {
     if (!isRecord(t)) continue;
     const alias = t.id_alias ?? t.id;
-    if (String(alias ?? '') === topicId) return t;
+    if ((typeof alias === 'string' || typeof alias === 'number') && String(alias) === topicId) return t;
   }
   return null;
 }
@@ -246,7 +246,9 @@ function noteFromKnowledgeResource(resource: unknown, topicName?: string): GetNo
     audio: typeof meta.audio === 'string' ? meta.audio : undefined,
     prime_id: typeof meta.prime_id === 'string' ? meta.prime_id : undefined,
     bloggerName: typeof resource.blogger_name === 'string' ? resource.blogger_name : undefined,
-    bloggerId: typeof resource.blogger_id_alias !== 'undefined' ? String(resource.blogger_id_alias) : undefined,
+    bloggerId: typeof resource.blogger_id_alias === 'string' || typeof resource.blogger_id_alias === 'number'
+      ? String(resource.blogger_id_alias)
+      : undefined,
   };
 }
 
@@ -326,10 +328,12 @@ export async function fetchSubscribedKnowledgeNotes(options: FetchNotesOptions):
       }
     } catch (err) {
       // 单个库拉取失败（无权限 / 限流 / 网络错误）不应中断其余库；上报后继续。
-      const topicAlias = topic.id_alias ?? topic.id;
+      // Note: isRecord() narrowing inside try does not propagate to catch, so re-narrow here.
+      const t = isRecord(topic) ? topic : {};
+      const topicAlias = t.id_alias ?? t.id;
       options.onTopicError?.({
         topic_id: String(topicAlias),
-        name: typeof topic.name === 'string' ? topic.name : String(topicAlias),
+        name: typeof t.name === 'string' ? t.name : String(topicAlias),
       }, err);
     }
   }
