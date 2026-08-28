@@ -272,7 +272,7 @@ describe('t() - New settings keys', () => {
   });
 
   it('settings.interval.hint', () => {
-    expect(i18n.t('settings.interval.hint')).toBe('最小 5 分钟');
+    expect(i18n.t('settings.interval.hint')).toBe('选择适合你使用频率的间隔，避免过快消耗得到大脑 API 调用配额');
   });
 
   it('settings.prefix.hint', () => {
@@ -302,7 +302,7 @@ describe('t() - New settings keys', () => {
     expect(i18n.t('settings.connectionSuccess')).toBe('Connection successful');
     expect(i18n.t('settings.maxDays.hint')).toBe('0 = no limit');
     expect(i18n.t('settings.noteTypes.label')).toBe('Note Types');
-    expect(i18n.t('settings.interval.hint')).toBe('Minimum 5 minutes');
+    expect(i18n.t('settings.interval.hint')).toBe('Choose an interval that matches your usage frequency to avoid exhausting your Dedao Brain API quota too quickly');
     expect(i18n.t('settings.lastSync.never')).toBe('Never synced');
     expect(i18n.t('settings.onboarding')).toBe('👋 Welcome! Choose an authentication mode and enter credentials first.');
   });

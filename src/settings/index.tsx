@@ -16,6 +16,22 @@ import { getLocalDateInputValue } from '../ui/date-input';
 
 type SuggestionProvider = (query: string) => string[];
 
+/**
+ * 预设同步间隔档位（分钟）。
+ * 设计依据：得到大脑 OpenAPI 有月度调用次数上限，过短的间隔会快速消耗配额；
+ * 因此提供从 5 分钟到 1 周的离散档位，避免用户输入非法值。
+ */
+const SYNC_INTERVAL_OPTIONS: ReadonlyArray<{ value: number; labelKey: string }> = [
+  { value: 5, labelKey: 'settings.interval.5min' },
+  { value: 10, labelKey: 'settings.interval.10min' },
+  { value: 20, labelKey: 'settings.interval.20min' },
+  { value: 30, labelKey: 'settings.interval.30min' },
+  { value: 60, labelKey: 'settings.interval.1hour' },
+  { value: 720, labelKey: 'settings.interval.12hour' },
+  { value: 1440, labelKey: 'settings.interval.1day' },
+  { value: 10080, labelKey: 'settings.interval.1week' },
+];
+
 class PathSuggest extends AbstractInputSuggest<string> {
   private readonly el: HTMLInputElement;
   private readonly getPaths: SuggestionProvider;
@@ -128,9 +144,7 @@ export function SettingsComponent({
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [connectionErrorMsg, setConnectionErrorMsg] = useState('');
   const [connectionExpiryMin, setConnectionExpiryMin] = useState<number | null>(null);
-  const intervalWarningTimeoutRef = useRef<number | null>(null);
   const connectionStatusTimeoutRef = useRef<number | null>(null);
-  const [intervalWarning, setIntervalWarning] = useState(false);
   const credentials = getAuthCredentials({ ...settings, authMode, openApiToken: apiTokenOpenapi, openApiClientId: clientIdOpenapi, webApiToken: apiTokenWeb });
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [pendingStartDate, setPendingStartDate] = useState(settings.syncStartDate);
@@ -348,29 +362,13 @@ export function SettingsComponent({
 
   const handleScheduledInterval = (value: string) => {
     const n = parseInt(value, 10);
-    if (isNaN(n) || n < 5) {
-      setIntervalWarning(true);
-      if (intervalWarningTimeoutRef.current !== null) {
-        window.clearTimeout(intervalWarningTimeoutRef.current);
-      }
-      updateSetting('scheduledSync', {
-        ...settings.scheduledSync,
-        enabledNoteTypes: scheduledNoteTypes,
-        syncKnowledgeBases: scheduledKnowledgeBases,
-        intervalMinutes: 5,
-      });
-      intervalWarningTimeoutRef.current = window.setTimeout(() => {
-        setIntervalWarning(false);
-        intervalWarningTimeoutRef.current = null;
-      }, 3000);
-    } else {
-      updateSetting('scheduledSync', {
-        ...settings.scheduledSync,
-        enabledNoteTypes: scheduledNoteTypes,
-        syncKnowledgeBases: scheduledKnowledgeBases,
-        intervalMinutes: n,
-      });
-    }
+    if (isNaN(n)) return;
+    updateSetting('scheduledSync', {
+      ...settings.scheduledSync,
+      enabledNoteTypes: scheduledNoteTypes,
+      syncKnowledgeBases: scheduledKnowledgeBases,
+      intervalMinutes: n,
+    });
   };
 
   const handleScheduledOnStart = (checked: boolean) => {
@@ -448,10 +446,6 @@ export function SettingsComponent({
   };
 
   useEffect(() => () => {
-    if (intervalWarningTimeoutRef.current !== null) {
-      window.clearTimeout(intervalWarningTimeoutRef.current);
-      intervalWarningTimeoutRef.current = null;
-    }
     if (connectionStatusTimeoutRef.current !== null) {
       window.clearTimeout(connectionStatusTimeoutRef.current);
       connectionStatusTimeoutRef.current = null;
@@ -758,19 +752,16 @@ export function SettingsComponent({
             <div className="getnote-scheduled-row">
               <span className="getnote-scheduled-row-label">{t('settings.scheduled.interval')}</span>
               <span className="getnote-scheduled-row-control">
-                <input
-                  type="number"
-                  min="5"
+                <select
                   value={scheduledSync.intervalMinutes}
-                  onInput={(e) => handleScheduledInterval((e.target as HTMLInputElement).value)}
-                />
+                  onChange={(e) => handleScheduledInterval((e.target as HTMLSelectElement).value)}
+                >
+                  {SYNC_INTERVAL_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
+                  ))}
+                </select>
               </span>
             </div>
-            {intervalWarning && (
-              <div className="getnote-input-hint getnote-input-hint-error">
-                {t('settings.interval.minWarning')}
-              </div>
-            )}
             <div className="getnote-scheduled-row">
               <span className="getnote-scheduled-row-label">{t('settings.scheduled.onStart')}</span>
               <span className="getnote-scheduled-row-control">

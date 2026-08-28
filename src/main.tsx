@@ -349,7 +349,9 @@ export default class GetNoteSyncPlugin extends Plugin {
 
   startAutoSync(): void {
     this.stopAutoSync();
-    const interval = Math.max(5, this.settings.scheduledSync.intervalMinutes) * 60 * 1000;
+    // 最小兜底 1 分钟，防止配置异常导致 0 或负数间隔造成死循环；
+    // 正常档位由设置页的下拉选择约束（5 分钟 ~ 1 周）。
+    const interval = Math.max(1, this.settings.scheduledSync.intervalMinutes) * 60 * 1000;
     this.autoSyncIntervalId = window.setInterval(() => {
       if (!this.isSyncing) {
         void this.doAutoSync();

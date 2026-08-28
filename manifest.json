@@ -1,7 +1,7 @@
 {
   "id": "dedao-kb-sync",
   "name": "Dedao KB Sync",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Sync selected Dedao Brain knowledge bases and subscribed blogger notes into folder-based Markdown notes.",
   "author": "Marvincao",
   "authorUrl": "https://github.com/leschamy4-del",
