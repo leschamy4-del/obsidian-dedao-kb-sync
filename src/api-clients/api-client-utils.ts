@@ -34,9 +34,19 @@ export function parseJsonObjectOrEmpty(text: string): Record<string, unknown> {
   }
 }
 
-export async function waitForRetryDelay(signal?: AbortSignal): Promise<void> {
+/**
+ * 429 限流退避：指数退避（3s / 6s / 12s，封顶 12s）。
+ * - attempt 从 1 开始，每次重试翻倍；
+ * - 若服务端响应头带 Retry-After，则优先按其秒数等待（封顶 30s）。
+ */
+export async function waitForRetryDelay(attempt = 1, retryAfterSeconds?: number, signal?: AbortSignal): Promise<void> {
+  const base = Math.min(3000 * Math.pow(2, attempt - 1), 12_000);
+  const delayMs =
+    retryAfterSeconds && retryAfterSeconds > 0
+      ? Math.min(retryAfterSeconds * 1000, 30_000)
+      : base;
   await new Promise<void>(resolve => {
-    const timer = window.setTimeout(() => resolve(), 3000);
+    const timer = window.setTimeout(() => resolve(), delayMs);
     signal?.addEventListener('abort', () => {
       window.clearTimeout(timer);
       resolve();

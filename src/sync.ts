@@ -1190,6 +1190,11 @@ export class SyncEngine {
     const createdTopicIds = selectedKnowledgeBases.filter(id => createdIds.has(id));
     const bloggerIds: string[] = [];
 
+    // 增量截止时间：列表翻页层提前退出，避免每次自动同步都全量拉取 12 个知识库。
+    const cutoffTime = this.scopeOptions.syncStartDate
+      ? parseSyncBoundaryTime(this.scopeOptions.syncStartDate)
+      : null;
+
     const knowledgeNotes = await fetchSubscribedKnowledgeNotes({
       token: credentials.token,
       clientId: credentials.clientId,
@@ -1198,12 +1203,9 @@ export class SyncEngine {
       topicIds,
       createdTopicIds,
       bloggerIds,
+      cutoffTime,
       onTopicError: (topic, error) => this.recordTopicFailure(result, topic, error),
     });
-
-    const cutoffTime = this.scopeOptions.syncStartDate
-      ? parseSyncBoundaryTime(this.scopeOptions.syncStartDate)
-      : null;
 
     const filteredNotes = knowledgeNotes.filter(note => {
       if (cutoffTime === null) return true;

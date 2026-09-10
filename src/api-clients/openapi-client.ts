@@ -114,12 +114,20 @@ function parseErrorBody(text: string): Record<string, unknown> {
   return parseJsonObjectOrEmpty(text);
 }
 
+function parseRetryAfterSeconds(res: Response): number | undefined {
+  const value = res.headers.get('Retry-After');
+  if (!value) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
 async function handleRateLimit<T>(
   url: string,
   options: RequestInit,
   res: Response,
   retries: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  attempt = 1
 ): Promise<T> {
   const text = await res.text().catch(() => '');
   const json = parseErrorBody(text);
@@ -130,14 +138,14 @@ async function handleRateLimit<T>(
     throw new Error(t('error.quotaExceeded'));
   }
   if (retries > 0) {
-    await waitForRetryDelay(signal);
+    await waitForRetryDelay(attempt, parseRetryAfterSeconds(res), signal);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    return apiRequest(url, options, retries - 1, signal);
+    return apiRequest(url, options, retries - 1, signal, attempt + 1);
   }
   throw new Error(t('error.rateLimited'));
 }
 
-async function apiRequest<T>(url: string, options: RequestInit, retries = 1, signal?: AbortSignal): Promise<T> {
+async function apiRequest<T>(url: string, options: RequestInit, retries = 3, signal?: AbortSignal, attempt = 1): Promise<T> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const res = await fetch(url, { ...options, signal });
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -161,9 +169,9 @@ async function apiRequest<T>(url: string, options: RequestInit, retries = 1, sig
     const code = errObj?.code as number | undefined;
     if (code === 10201) throw new Error(t('error.openApiNotMember'));
     if (code === 10202 && retries > 0) {
-      await waitForRetryDelay(signal);
+      await waitForRetryDelay(attempt, undefined, signal);
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      return apiRequest(url, options, retries - 1, signal);
+      return apiRequest(url, options, retries - 1, signal, attempt + 1);
     }
     const rawMsg = (errObj?.message as string) ?? '';
     throw new Error(rawMsg ? t('error.apiGenericWithMsg', { msg: rawMsg }) : t('error.apiGeneric'));
@@ -181,6 +189,8 @@ export interface FetchNotesOptions {
   createdTopicIds?: string[];
   bloggerIds?: string[];
   selectedNoteIds?: string[];
+  /** 增量同步截止时间（epoch ms）：列表页最旧笔记早于该值时停止翻页，减少全量拉取。 */
+  cutoffTime?: number | null;
   onNotes?: (notes: GetNoteNote[]) => void | Promise<void>;
   /** 单个知识库拉取失败（无权限 / 限流）时回调，避免中断其余库的同步。 */
   onTopicError?: (topic: SubscribedTopic, error: unknown) => void;
@@ -390,13 +400,24 @@ export async function fetchSubscribedTopics(
   return topics;
 }
 
-async function fetchCreatedTopicNotes(topic: SubscribedTopic, token: string, clientId: string, signal?: AbortSignal, selectedNoteIds?: Set<string>): Promise<GetNoteNote[]> {
+/** 判断一页笔记是否按 created_at 倒序（API 正常按新→旧返回），供增量截止提前退出使用。 */
+function isPageSortedByCreatedDesc(notes: GetNoteNote[]): boolean {
+  for (let i = 1; i < notes.length; i++) {
+    const prev = Date.parse(notes[i - 1].created_at);
+    const curr = Date.parse(notes[i].created_at);
+    if (!Number.isFinite(prev) || !Number.isFinite(curr)) return false;
+    if (prev < curr) return false;
+  }
+  return true;
+}
+
+async function fetchCreatedTopicNotes(topic: SubscribedTopic, token: string, clientId: string, signal?: AbortSignal, selectedNoteIds?: Set<string>, cutoffTime?: number | null): Promise<GetNoteNote[]> {
   const notes: GetNoteNote[] = [];
   let page = 1;
   while (true) {
     const params = new URLSearchParams({ topic_id: topic.topic_id, page: String(page) });
     const url = `https://openapi.biji.com/open/api/v1/resource/knowledge/notes?${params.toString()}`;
-    const data = await knowledgeApiRequest<Record<string, unknown>>(url, { method: 'GET', headers: buildHeaders(token, clientId) }, 2, signal);
+    const data = await knowledgeApiRequest<Record<string, unknown>>(url, { method: 'GET', headers: buildHeaders(token, clientId) }, 3, signal);
     const source = normalizeData(data);
     const pageNotes = readArray(source, ['notes', 'list', 'items'])
       .filter(isRecord)
@@ -423,7 +444,17 @@ async function fetchCreatedTopicNotes(topic: SubscribedTopic, token: string, cli
       .filter(note => !selectedNoteIds || selectedNoteIds.has(note.note_id));
     notes.push(...pageNotes);
     for (const note of pageNotes) selectedNoteIds?.delete(note.note_id);
-    if (selectedNoteIds?.size === 0 || !readHasMore(source)) break;
+    // 增量同步：列表按 created_at 倒序时，当前页最旧笔记早于截止时间 → 后续页只会更旧，提前退出。
+    if (selectedNoteIds?.size === 0) break;
+    if (
+      cutoffTime != null &&
+      pageNotes.length > 0 &&
+      isPageSortedByCreatedDesc(pageNotes)
+    ) {
+      const oldestTime = Date.parse(pageNotes[pageNotes.length - 1].created_at);
+      if (Number.isFinite(oldestTime) && oldestTime < cutoffTime) break;
+    }
+    if (!readHasMore(source)) break;
     page++;
   }
   return notes;
@@ -646,7 +677,7 @@ export async function fetchSubscribedKnowledgeNotes(options: FetchNotesOptions):
     try {
       if (topic.source === 'created') {
         if (!createdTopicIdSet?.has(topic.topic_id)) continue;
-        const createdNotes = await fetchCreatedTopicNotes(topic, token, clientId, signal, remainingNoteIds);
+        const createdNotes = await fetchCreatedTopicNotes(topic, token, clientId, signal, remainingNoteIds, options.cutoffTime ?? null);
         notes.push(...createdNotes);
         await options.onNotes?.(createdNotes);
         if (remainingNoteIds?.size === 0) return notes;

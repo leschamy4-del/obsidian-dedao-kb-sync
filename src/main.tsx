@@ -427,9 +427,10 @@ export default class GetNoteSyncPlugin extends Plugin {
     }
 
     // lastSyncEndTimestamp only belongs to auto sync
-    // 更新断点只要：有笔记成功同步且有 lastNoteTimestamp（即使有部分失败）
-    if (type === 'auto' && status === 'success') {
-      this.settings.lastSyncEndTimestamp = result.lastNoteTimestamp ?? new Date(finishedAt).toISOString();
+    // 只有本次确实同步到笔记（拿到 lastNoteTimestamp）才推进断点；
+    // total=0 时保持旧断点，避免断点漂移到"当前时间"导致后续新笔记被日期过滤挡掉。
+    if (type === 'auto' && status === 'success' && result.lastNoteTimestamp) {
+      this.settings.lastSyncEndTimestamp = result.lastNoteTimestamp;
     }
 
     this.lastSyncResult = entry;

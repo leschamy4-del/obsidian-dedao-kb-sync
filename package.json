@@ -1,6 +1,6 @@
 {
   "name": "obsidian-dedao-kb-sync",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Sync selected Dedao Brain knowledge bases and subscribed blogger notes into folder-based Markdown notes for Obsidian.",
   "main": "main.js",
   "scripts": {

@@ -19,6 +19,8 @@ export interface FetchNotesOptions {
   createdTopicIds?: string[];
   bloggerIds?: string[];
   selectedNoteIds?: string[];
+  /** 增量同步截止时间（epoch ms）：知识库列表翻页时，最旧笔记早于该值即提前退出。 */
+  cutoffTime?: number | null;
   onNotes?: (notes: GetNoteNote[]) => void | Promise<void>;
   /**
    * 单个知识库拉取失败时回调（如 403 无权限 / 429 限流 / 网络错误）。
@@ -122,6 +124,7 @@ export async function fetchSubscribedKnowledgeNotes(options: FetchNotesOptions):
     createdTopicIds: options.createdTopicIds,
     bloggerIds: options.bloggerIds,
     selectedNoteIds: options.selectedNoteIds,
+    cutoffTime: options.cutoffTime,
     onNotes: options.onNotes,
     onTopicError: options.onTopicError,
   });

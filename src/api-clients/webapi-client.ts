@@ -92,12 +92,20 @@ function tryParseJsonObject(text: string): Record<string, unknown> {
   return parseJsonObjectOrEmpty(text);
 }
 
+function parseRetryAfterSeconds(res: Response): number | undefined {
+  const value = res.headers.get('Retry-After');
+  if (!value) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
 async function handleRateLimit<T>(
   url: string,
   options: RequestInit,
   res: Response,
   retries: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  attempt = 1
 ): Promise<T> {
   const text = await res.text().catch(() => '');
   const json = tryParseJsonObject(text);
@@ -107,14 +115,14 @@ async function handleRateLimit<T>(
     throw new Error(t('error.quotaExceeded'));
   }
   if (retries > 0) {
-    await waitForRetryDelay(signal);
+    await waitForRetryDelay(attempt, parseRetryAfterSeconds(res), signal);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    return apiRequest(url, options, retries - 1, signal);
+    return apiRequest(url, options, retries - 1, signal, attempt + 1);
   }
   throw new Error(t('error.rateLimited'));
 }
 
-async function apiRequest<T>(url: string, options: RequestInit, retries = 1, signal?: AbortSignal): Promise<T> {
+async function apiRequest<T>(url: string, options: RequestInit, retries = 3, signal?: AbortSignal, attempt = 1): Promise<T> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const res = await fetch(url, { ...options, signal });
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -125,12 +133,12 @@ async function apiRequest<T>(url: string, options: RequestInit, retries = 1, sig
     if (msg === 'LoginRequired') throw new Error(t('error.webApiLoginRequired'));
     throw new Error(t('error.webApiForbidden'));
   }
-  if (res.status === 429) return handleRateLimit<T>(url, options, res, retries, signal);
+  if (res.status === 429) return handleRateLimit<T>(url, options, res, retries, signal, attempt);
   if (res.status < 200 || res.status >= 300) {
     if (res.status >= 500 && retries > 0) {
-      await waitForRetryDelay(signal);
+      await waitForRetryDelay(attempt, undefined, signal);
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      return apiRequest(url, options, retries - 1, signal);
+      return apiRequest(url, options, retries - 1, signal, attempt + 1);
     }
     throw new Error(t('error.apiServerError', { status: res.status }));
   }
